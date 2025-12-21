@@ -46,6 +46,36 @@ router.get('/:spaceId', verifyToken, async (req, res) => {
     }
 });
 
+// Update Subject name (owner/admin/editor only)
+router.put('/:subjectId', verifyToken, async (req, res) => {
+    const { subjectId } = req.params;
+    const { name } = req.body;
+
+    try {
+        const subject = await Subject.findById(subjectId);
+        if (!subject) {
+            return res.status(404).json({ status: 'error', message: 'Subject not found' });
+        }
+
+        const space = await Space.findById(subject.spaceId);
+        if (!space) {
+            return res.status(404).json({ status: 'error', message: 'Space not found' });
+        }
+
+        if (!canUserEdit(space, req.user._id)) {
+            return res.status(403).json({ status: 'error', message: 'You do not have permission to update this subject' });
+        }
+
+        subject.name = name;
+        await subject.save();
+
+        res.json({ status: 'success', subject, message: 'Subject renamed successfully' });
+    } catch (error) {
+        console.error("Update Subject Error:", error);
+        res.status(500).json({ status: 'error', message: 'Failed to update subject' });
+    }
+});
+
 // Delete a Subject (owner/admin/editor only)
 router.delete('/:subjectId', verifyToken, async (req, res) => {
     const { subjectId } = req.params;
