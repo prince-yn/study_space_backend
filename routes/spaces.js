@@ -44,6 +44,35 @@ router.get('/my-spaces', verifyToken, async (req, res) => {
     }
 });
 
+// Update space details (owner only)
+router.put('/:spaceId', verifyToken, async (req, res) => {
+    const { spaceId } = req.params;
+    const { name, description } = req.body;
+
+    try {
+        const space = await Space.findById(spaceId);
+
+        if (!space) {
+            return res.status(404).json({ status: 'error', message: 'Space not found' });
+        }
+
+        // Only owner can update
+        if (space.owner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ status: 'error', message: 'Only owner can update space details' });
+        }
+
+        if (name) space.name = name;
+        if (description !== undefined) space.description = description;
+        
+        await space.save();
+
+        res.json({ status: 'success', space, message: 'Space updated successfully' });
+    } catch (error) {
+        console.error("Update Space Error:", error);
+        res.status(500).json({ status: 'error', message: 'Could not update space' });
+    }
+});
+
 // Join space with code
 router.post('/join', verifyToken, async (req, res) => {
     const { joinCode } = req.body;
