@@ -8,9 +8,22 @@ const upload = require('../config/multer');
 const { model } = require('../config/gemini');
 const Material = require('../models/Material');
 const Subject = require('../models/Subject');
+const Space = require('../models/Space');
 const { searchImages, extractImagePlaceholders, replaceImagePlaceholders } = require('../utils/imageSearch');
 const { pdfToImages, cleanupImages } = require('../utils/pdfToImages');
 const { processImageGenerationRequests } = require('../utils/imageGeneration');
+
+// Helper function to check if user can edit
+const canUserEdit = async (spaceId, userId) => {
+    const space = await Space.findById(spaceId);
+    if (!space) return false;
+    
+    const userIdStr = userId.toString();
+    const isOwner = space.owner.toString() === userIdStr;
+    const isAdmin = space.admins.some(admin => admin.toString() === userIdStr);
+    const isEditor = space.editors && space.editors.some(editor => editor.toString() === userIdStr);
+    return isOwner || isAdmin || isEditor;
+};
 
 // Scan Notes - Upload files and convert to Markdown with LaTeX
 router.post('/create', verifyToken, upload.array('files', 20), async (req, res) => {
@@ -26,6 +39,11 @@ router.post('/create', verifyToken, upload.array('files', 20), async (req, res) 
         const subject = await Subject.findById(subjectId);
         if (!subject) {
             return res.status(404).json({ status: 'error', message: 'Subject not found' });
+        }
+
+        // Check if user has edit permission
+        if (!(await canUserEdit(subject.spaceId, req.user._id))) {
+            return res.status(403).json({ status: 'error', message: 'You do not have permission to create materials in this space' });
         }
 
         let contentParts = [];
@@ -273,6 +291,30 @@ router.get('/material/:id', verifyToken, async (req, res) => {
     } catch (error) {
         console.error("Fetch Material Error:", error);
         res.status(500).json({ status: 'error', message: 'Failed to fetch material' });
+    }
+});
+
+// Delete a Material (owner/admin/editor only)
+router.delete('/:materialId', verifyToken, async (req, res) => {
+    const { materialId } = req.params;
+
+    try {
+        const material = await Material.findById(materialId);
+        if (!material) {
+            return res.status(404).json({ status: 'error', message: 'Material not found' });
+        }
+
+        // Check if user has edit permission
+        if (!(await canUserEdit(material.spaceId, req.user._id))) {
+            return res.status(403).json({ status: 'error', message: 'You do not have permission to delete this material' });
+        }
+
+        await Material.findByIdAndDelete(materialId);
+
+        res.json({ status: 'success', message: 'Material deleted successfully' });
+    } catch (error) {
+        console.error("Delete Material Error:", error);
+        res.status(500).json({ status: 'error', message: 'Failed to delete material' });
     }
 });
 

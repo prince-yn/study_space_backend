@@ -181,15 +181,183 @@ router.post('/:spaceId/leave', verifyToken, async (req, res) => {
             return res.status(400).json({ status: 'error', message: 'Owner cannot leave space. Delete it instead.' });
         }
 
-        // Remove from members and admins
+        // Remove from members, admins, and editors
         space.members = space.members.filter(member => member.toString() !== req.user._id.toString());
         space.admins = space.admins.filter(admin => admin.toString() !== req.user._id.toString());
+        space.editors = space.editors.filter(editor => editor.toString() !== req.user._id.toString());
         await space.save();
 
         res.json({ status: 'success', message: 'Left space successfully' });
     } catch (error) {
         console.error("Leave Space Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not leave space' });
+    }
+});
+
+// Get space members with their roles
+router.get('/:spaceId/members', verifyToken, async (req, res) => {
+    const { spaceId } = req.params;
+
+    try {
+        const space = await Space.findById(spaceId)
+            .populate('members', 'name email picture uid')
+            .populate('owner', 'name email picture uid')
+            .populate('admins', 'name email picture uid')
+            .populate('editors', 'name email picture uid');
+
+        if (!space) {
+            return res.status(404).json({ status: 'error', message: 'Space not found' });
+        }
+
+        // Check if requester is a member
+        if (!space.members.some(member => member._id.toString() === req.user._id.toString())) {
+            return res.status(403).json({ status: 'error', message: 'Not a member of this space' });
+        }
+
+        // Build members list with roles
+        const membersWithRoles = space.members.map(member => {
+            const isOwner = space.owner._id.toString() === member._id.toString();
+            const isAdmin = space.admins.some(admin => admin._id.toString() === member._id.toString());
+            const isEditor = space.editors.some(editor => editor._id.toString() === member._id.toString());
+            
+            return {
+                _id: member._id,
+                name: member.name,
+                email: member.email,
+                picture: member.picture,
+                uid: member.uid,
+                isOwner,
+                isAdmin,
+                isEditor,
+                canEdit: isOwner || isAdmin || isEditor // Owner and admins can always edit
+            };
+        });
+
+        res.json({ 
+            status: 'success', 
+            members: membersWithRoles,
+            currentUserIsOwner: space.owner._id.toString() === req.user._id.toString()
+        });
+    } catch (error) {
+        console.error("Get Members Error:", error);
+        res.status(500).json({ status: 'error', message: 'Could not fetch members' });
+    }
+});
+
+// Toggle editor permission (owner only)
+router.post('/:spaceId/toggle-editor', verifyToken, async (req, res) => {
+    const { userId } = req.body;
+    const { spaceId } = req.params;
+
+    try {
+        const space = await Space.findById(spaceId);
+
+        if (!space) {
+            return res.status(404).json({ status: 'error', message: 'Space not found' });
+        }
+
+        // Only owner can toggle editors
+        if (space.owner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ status: 'error', message: 'Only owner can manage editor permissions' });
+        }
+
+        // Cannot change owner's permissions
+        if (userId === space.owner.toString()) {
+            return res.status(400).json({ status: 'error', message: 'Cannot change owner permissions' });
+        }
+
+        // Check if target user is a member
+        if (!space.members.some(member => member.toString() === userId)) {
+            return res.status(400).json({ status: 'error', message: 'User is not a member of this space' });
+        }
+
+        // Initialize editors array if it doesn't exist
+        if (!space.editors) {
+            space.editors = [];
+        }
+
+        // Toggle editor status
+        const isEditor = space.editors.some(editor => editor.toString() === userId);
+        if (isEditor) {
+            space.editors = space.editors.filter(editor => editor.toString() !== userId);
+        } else {
+            space.editors.push(userId);
+        }
+        await space.save();
+
+        res.json({ 
+            status: 'success', 
+            message: isEditor ? 'Editor permission removed' : 'Editor permission granted',
+            isEditor: !isEditor
+        });
+    } catch (error) {
+        console.error("Toggle Editor Error:", error);
+        res.status(500).json({ status: 'error', message: 'Could not update editor permission' });
+    }
+});
+
+// Remove member from space (owner only)
+router.post('/:spaceId/remove-member', verifyToken, async (req, res) => {
+    const { userId } = req.body;
+    const { spaceId } = req.params;
+
+    try {
+        const space = await Space.findById(spaceId);
+
+        if (!space) {
+            return res.status(404).json({ status: 'error', message: 'Space not found' });
+        }
+
+        // Only owner can remove members
+        if (space.owner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ status: 'error', message: 'Only owner can remove members' });
+        }
+
+        // Cannot remove owner
+        if (userId === space.owner.toString()) {
+            return res.status(400).json({ status: 'error', message: 'Cannot remove owner from space' });
+        }
+
+        // Remove from members, admins, and editors
+        space.members = space.members.filter(member => member.toString() !== userId);
+        space.admins = space.admins.filter(admin => admin.toString() !== userId);
+        space.editors = space.editors.filter(editor => editor.toString() !== userId);
+        await space.save();
+
+        res.json({ status: 'success', message: 'Member removed successfully' });
+    } catch (error) {
+        console.error("Remove Member Error:", error);
+        res.status(500).json({ status: 'error', message: 'Could not remove member' });
+    }
+});
+
+// Check if user can edit (owner, admin, or editor)
+router.get('/:spaceId/can-edit', verifyToken, async (req, res) => {
+    const { spaceId } = req.params;
+
+    try {
+        const space = await Space.findById(spaceId);
+
+        if (!space) {
+            return res.status(404).json({ status: 'error', message: 'Space not found' });
+        }
+
+        const userId = req.user._id.toString();
+        const isOwner = space.owner.toString() === userId;
+        const isAdmin = space.admins.some(admin => admin.toString() === userId);
+        const isEditor = space.editors && space.editors.some(editor => editor.toString() === userId);
+        const canEdit = isOwner || isAdmin || isEditor;
+
+        res.json({ 
+            status: 'success', 
+            canEdit,
+            isOwner,
+            isAdmin,
+            isEditor
+        });
+    } catch (error) {
+        console.error("Check Edit Permission Error:", error);
+        res.status(500).json({ status: 'error', message: 'Could not check permissions' });
     }
 });
 

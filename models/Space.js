@@ -11,6 +11,8 @@ const SpaceSchema = new mongoose.Schema({
   admins: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   // List of Members (starts with just the owner)
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  // List of editors (users who can create/edit subjects and materials)
+  editors: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   createdAt: { type: Date, default: Date.now }
 });
 
