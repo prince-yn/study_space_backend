@@ -22,7 +22,6 @@ async function generateImage(prompt, options = {}) {
     // Retry loop
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            // Generate image using Pollinations.ai
             const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}`;
             const response = await axios.get(imageUrl, {
                 responseType: 'arraybuffer',
