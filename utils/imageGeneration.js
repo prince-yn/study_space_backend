@@ -37,7 +37,7 @@ async function generateImage(prompt, options = {}) {
             // Upload to Cloudinary if enabled
             if (process.env.USE_CLOUDINARY === 'true') {
                 const uploadResult = await new Promise((resolve, reject) => {
-                    const uploadStream = cloudinary.uploader.upload_stream(
+                    const uploadStream = cloudinary.v2.uploader.upload_stream(
                         {
                             folder: 'study_space/generated',
                             resource_type: 'image',
