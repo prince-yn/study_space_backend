@@ -54,62 +54,61 @@ TITLE: [Clear, descriptive title]
 
         contentParts.push(systemPrompt);
 
-        // Track images from PDFs for cleanup
-        let pdfImages = [];
-
         // Process uploaded files
         for (const file of uploadedFiles) {
-            const filePath = file.path;
             const ext = path.extname(file.originalname).toLowerCase();
+            const isCloudinary = process.env.USE_CLOUDINARY === 'true';
 
             sourceFiles.push({
                 originalName: file.originalname,
                 fileType: ext.includes('pdf') ? 'pdf' : ext.match(/\.(jpg|jpeg|png|gif|webp)/) ? 'image' : 'other',
-                size: file.size
+                size: file.size,
+                url: isCloudinary ? file.path : undefined
             });
 
             if (ext === '.pdf') {
-                // Convert PDF to images first (better for scanned PDFs)
-                const uploadsDir = path.dirname(filePath);
-                const images = await pdfToImages(filePath, uploadsDir);
+                // For PDFs, we need to download from Cloudinary first if using cloud storage
+                let pdfBuffer;
                 
-                if (images.length > 0) {
-                    // Use image-based processing (better for scanned PDFs)
-                    console.log(`Processing PDF as ${images.length} images`);
-                    pdfImages = pdfImages.concat(images);
-                    
-                    for (const img of images) {
-                        contentParts.push({
-                            inlineData: {
-                                data: img.data,
-                                mimeType: img.mimeType
-                            }
-                        });
-                    }
+                if (isCloudinary) {
+                    // Download PDF from Cloudinary URL
+                    const axios = require('axios');
+                    const response = await axios.get(file.path, { responseType: 'arraybuffer' });
+                    pdfBuffer = Buffer.from(response.data);
+                } else {
+                    // Read from memory buffer or local file
+                    pdfBuffer = file.buffer || fs.readFileSync(file.path);
+                }
+
+                // Try to extract text first (faster for text-based PDFs)
+                const pdfData = await pdfParse(pdfBuffer);
+                
+                if (pdfData.text && pdfData.text.trim().length > 100) {
+                    // Good text extraction - use it
                     contentParts.push({
-                        text: `Above images are pages from PDF "${file.originalname}". Analyze all pages.`
+                        text: `PDF Content from "${file.originalname}":\n${pdfData.text}`
                     });
                 } else {
-                    // Fallback to text extraction for text-based PDFs
-                    console.log('Falling back to PDF text extraction');
-                    const dataBuffer = fs.readFileSync(filePath);
-                    const pdfData = await pdfParse(dataBuffer);
-                    
-                    if (pdfData.text && pdfData.text.trim().length > 100) {
-                        contentParts.push({
-                            text: `PDF Content from "${file.originalname}":\n${pdfData.text}`
-                        });
-                    } else {
-                        // Very little text - might be scanned, warn user
-                        contentParts.push({
-                            text: `PDF "${file.originalname}" appears to be scanned/image-based but conversion failed. Limited text extracted: ${pdfData.text || 'none'}`
-                        });
-                    }
+                    // Scanned PDF or no text - note it
+                    contentParts.push({
+                        text: `PDF "${file.originalname}" has minimal text (possibly scanned). Extracted: ${pdfData.text || 'none'}`
+                    });
                 }
             } else if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
                 // Handle image
-                const imageData = fs.readFileSync(filePath);
-                const base64Image = imageData.toString('base64');
+                let imageBuffer;
+                
+                if (isCloudinary) {
+                    // Download image from Cloudinary URL
+                    const axios = require('axios');
+                    const response = await axios.get(file.path, { responseType: 'arraybuffer' });
+                    imageBuffer = Buffer.from(response.data);
+                } else {
+                    // Read from memory buffer or local file
+                    imageBuffer = file.buffer || fs.readFileSync(file.path);
+                }
+                
+                const base64Image = imageBuffer.toString('base64');
                 const mimeTypes = {
                     '.jpg': 'image/jpeg',
                     '.jpeg': 'image/jpeg',
@@ -127,12 +126,15 @@ TITLE: [Clear, descriptive title]
                 });
             }
 
-            // Clean up file
-            fs.unlinkSync(filePath);
+            // Clean up local file only (not Cloudinary)
+            if (!isCloudinary && file.path) {
+                try {
+                    fs.unlinkSync(file.path);
+                } catch (err) {
+                    console.error('Error deleting file:', err.message);
+                }
+            }
         }
-
-        // Clean up PDF images
-        cleanupImages(pdfImages);
 
         // Add text prompt if provided
         if (prompt && prompt.trim()) {

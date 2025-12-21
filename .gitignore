@@ -18,6 +18,9 @@ jspm_packages/
 
 # Build output
 dist/
+
+# Firebase service account (never commit this!)
+service-account.json
 build/
 *.log
 out/

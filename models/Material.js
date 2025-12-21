@@ -16,7 +16,8 @@ const MaterialSchema = new mongoose.Schema({
   sourceFiles: [{
     originalName: String,
     fileType: String, // 'image', 'pdf', 'audio', 'text'
-    size: Number
+    size: Number,
+    url: String // Cloudinary URL if using cloud storage
   }],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
