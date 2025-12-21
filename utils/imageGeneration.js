@@ -1,8 +1,8 @@
-const { genAI } = require('../config/gemini');
+const axios = require('axios');
 const cloudinary = require('../config/cloudinary');
 
 /**
- * Generate an image using Google's Gemini 2.5 Flash Image model
+ * Generate an image using Pollinations.ai (free, no API key required)
  * and upload to Cloudinary
  */
 async function generateImage(prompt, options = {}) {
@@ -15,57 +15,55 @@ async function generateImage(prompt, options = {}) {
             enhancedPrompt = `Educational diagram: ${prompt}, clean white background, labeled, scientific illustration style, high quality, detailed`;
         }
 
-        // Generate image using Gemini 2.5 Flash Image
-        const imageModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
-        const response = await imageModel.generateContent(enhancedPrompt);
-
-        // Extract image data from response
-        for (const part of response.response.candidates[0].content.parts) {
-            if (part.inlineData) {
-                const imageData = part.inlineData.data;
-                const buffer = Buffer.from(imageData, 'base64');
-
-                // Upload to Cloudinary if enabled
-                if (process.env.USE_CLOUDINARY === 'true') {
-                    const uploadResult = await new Promise((resolve, reject) => {
-                        const uploadStream = cloudinary.uploader.upload_stream(
-                            {
-                                folder: 'study_space/generated',
-                                resource_type: 'image',
-                                format: 'png'
-                            },
-                            (error, result) => {
-                                if (error) reject(error);
-                                else resolve(result);
-                            }
-                        );
-                        uploadStream.end(buffer);
-                    });
-
-                    console.log(`Generated image uploaded to Cloudinary: ${uploadResult.secure_url}`);
-                    
-                    return {
-                        success: true,
-                        url: uploadResult.secure_url,
-                        prompt: prompt,
-                        enhancedPrompt: enhancedPrompt
-                    };
-                } else {
-                    // Fallback: return base64 data URL (not recommended for production)
-                    const dataUrl = `data:image/png;base64,${imageData}`;
-                    console.warn('Cloudinary not enabled, using base64 data URL');
-                    
-                    return {
-                        success: true,
-                        url: dataUrl,
-                        prompt: prompt,
-                        enhancedPrompt: enhancedPrompt
-                    };
-                }
+        // Generate image using Pollinations.ai
+        const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}`;
+        const response = await axios.get(imageUrl, {
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            headers: {
+                'User-Agent': 'StudySpace/1.0'
             }
-        }
+        });
 
-        throw new Error('No image data in response');
+        const buffer = Buffer.from(response.data, 'binary');
+
+        // Upload to Cloudinary if enabled
+        if (process.env.USE_CLOUDINARY === 'true') {
+            const uploadResult = await new Promise((resolve, reject) => {
+                const uploadStream = cloudinary.uploader.upload_stream(
+                    {
+                        folder: 'study_space/generated',
+                        resource_type: 'image',
+                        format: 'png'
+                    },
+                    (error, result) => {
+                        if (error) reject(error);
+                        else resolve(result);
+                    }
+                );
+                uploadStream.end(buffer);
+            });
+
+            console.log(`Generated image uploaded to Cloudinary: ${uploadResult.secure_url}`);
+            
+            return {
+                success: true,
+                url: uploadResult.secure_url,
+                prompt: prompt,
+                enhancedPrompt: enhancedPrompt
+            };
+        } else {
+            // Fallback: return base64 data URL (not recommended for production)
+            const dataUrl = `data:image/png;base64,${buffer.toString('base64')}`;
+            console.warn('Cloudinary not enabled, using base64 data URL');
+            
+            return {
+                success: true,
+                url: dataUrl,
+                prompt: prompt,
+                enhancedPrompt: enhancedPrompt
+            };
+        }
     } catch (error) {
         console.error('Image generation error:', error.message);
         return { success: false, error: error.message };
