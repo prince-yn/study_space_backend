@@ -96,7 +96,8 @@ router.post('/join', verifyToken, async (req, res) => {
 
 // Make user admin (owner or existing admin only)
 router.post('/:spaceId/make-admin', verifyToken, async (req, res) => {
-    const { userId } = req.body;
+    const { userId, memberId } = req.body;
+    const targetUserId = userId || memberId; // Accept both for compatibility
     const { spaceId } = req.params;
 
     try {
@@ -115,17 +116,17 @@ router.post('/:spaceId/make-admin', verifyToken, async (req, res) => {
         }
 
         // Check if target user is a member
-        if (!space.members.some(member => member.toString() === userId)) {
+        if (!space.members.some(member => member.toString() === targetUserId)) {
             return res.status(400).json({ status: 'error', message: 'User is not a member of this space' });
         }
 
         // Check if already admin
-        if (space.admins.some(admin => admin.toString() === userId)) {
+        if (space.admins.some(admin => admin.toString() === targetUserId)) {
             return res.status(400).json({ status: 'error', message: 'User is already an admin' });
         }
 
         // Add to admins
-        space.admins.push(userId);
+        space.admins.push(targetUserId);
         await space.save();
 
         res.json({ status: 'success', message: 'User promoted to admin', space });
@@ -136,7 +137,8 @@ router.post('/:spaceId/make-admin', verifyToken, async (req, res) => {
 
 // Remove admin (owner only)
 router.post('/:spaceId/remove-admin', verifyToken, async (req, res) => {
-    const { userId } = req.body;
+    const { userId, adminId } = req.body;
+    const targetUserId = userId || adminId; // Accept both for compatibility
     const { spaceId } = req.params;
 
     try {
@@ -152,7 +154,7 @@ router.post('/:spaceId/remove-admin', verifyToken, async (req, res) => {
         }
 
         // Remove from admins
-        space.admins = space.admins.filter(admin => admin.toString() !== userId);
+        space.admins = space.admins.filter(admin => admin.toString() !== targetUserId);
         await space.save();
 
         res.json({ status: 'success', message: 'Admin removed', space });
@@ -177,6 +179,15 @@ router.delete('/:spaceId', verifyToken, async (req, res) => {
             return res.status(403).json({ status: 'error', message: 'Only owner can delete space' });
         }
 
+        // Delete all materials in this space
+        const Material = require('../models/Material');
+        await Material.deleteMany({ spaceId: spaceId });
+
+        // Delete all subjects in this space
+        const Subject = require('../models/Subject');
+        await Subject.deleteMany({ spaceId: spaceId });
+
+        // Delete the space
         await Space.findByIdAndDelete(spaceId);
 
         res.json({ status: 'success', message: 'Space deleted successfully' });

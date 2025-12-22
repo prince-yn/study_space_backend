@@ -86,7 +86,7 @@ router.post('/conversation', verifyToken, async (req, res) => {
         messages.forEach(msg => {
             if (msg.role === 'user') {
                 conversationParts.push(`\nStudent: ${msg.content}`);
-            } else if (msg.role === 'assistant') {
+            } else if (msg.role === 'assistant' || msg.role === 'model') {
                 conversationParts.push(`\nAssistant: ${msg.content}`);
             }
         });
