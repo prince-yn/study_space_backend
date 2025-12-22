@@ -10,33 +10,25 @@ const KROKI_BASE_URL = 'https://kroki.io';
  * Supported diagram types in Kroki
  */
 const DIAGRAM_TYPES = {
-    // Most commonly used
-    'mermaid': 'mermaid',
-    'plantuml': 'plantuml',
-    'graphviz': 'graphviz',
-    'dot': 'graphviz',
-    'd2': 'd2',
-    'excalidraw': 'excalidraw',
-    
-    // Additional types
-    'blockdiag': 'blockdiag',
-    'seqdiag': 'seqdiag',
-    'actdiag': 'actdiag',
-    'nwdiag': 'nwdiag',
-    'packetdiag': 'packetdiag',
-    'rackdiag': 'rackdiag',
-    'c4plantuml': 'c4plantuml',
-    'ditaa': 'ditaa',
-    'erd': 'erd',
-    'nomnoml': 'nomnoml',
-    'pikchr': 'pikchr',
-    'structurizr': 'structurizr',
-    'svgbob': 'svgbob',
-    'vega': 'vega',
-    'vegalite': 'vegalite',
-    'wavedrom': 'wavedrom',
-    'wireviz': 'wireviz'
+  mermaid: 'mermaid',
+  plantuml: 'plantuml',
+  graphviz: 'graphviz',
+  dot: 'graphviz',
+  blockdiag: 'blockdiag',
+  seqdiag: 'seqdiag',
+  actdiag: 'actdiag',
+  nwdiag: 'nwdiag',
+  packetdiag: 'packetdiag',
+  rackdiag: 'rackdiag',
+  c4plantuml: 'c4plantuml',
+  ditaa: 'ditaa',
+  erd: 'erd',
+  structurizr: 'structurizr',
+  vega: 'vega',
+  vegalite: 'vegalite',
+  wireviz: 'wireviz'
 };
+
 
 /**
  * Encode diagram source for Kroki URL
