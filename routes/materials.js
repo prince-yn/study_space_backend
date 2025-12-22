@@ -35,6 +35,11 @@ router.post('/create', verifyToken, upload.array('files', 20), async (req, res) 
             return res.status(400).json({ status: 'error', message: 'Subject ID is required' });
         }
 
+        // Validate ObjectId format
+        if (!subjectId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid subject ID format' });
+        }
+
         // Verify subject exists and get space ID
         const subject = await Subject.findById(subjectId);
         if (!subject) {
@@ -50,25 +55,34 @@ router.post('/create', verifyToken, upload.array('files', 20), async (req, res) 
         let sourceFiles = [];
 
         // Enhanced system prompt with image placeholder instructions
-        const systemPrompt = `Analyze the provided content and create structured study notes in Markdown format.
+        const systemPrompt = `# Role
+You are an expert Academic Assistant specializing in transforming fragmented study materials (rough notes, blackboard photos, or transcripts) into high-quality, student-friendly Markdown notes.
 
-**Requirements:**
-1. Use clear headers (##, ###) for organizing topics
-2. **CRUCIAL:** Write mathematical formulas using LaTeX syntax:
-   - Inline math: $formula$
-   - Block math: $$formula$$
-3. **Image Placeholders:** 
-   - For diagrams you want ME TO SEARCH for: {{IMAGE: description}}
-   - For diagrams you want AI TO GENERATE: {{GENERATE: description}}
-   Example: {{GENERATE: diagram showing photosynthesis process with labeled chloroplasts}}
-4. Keep content accurate and match the source material
-5. Only add clarifications if something is unclear or undetectable
-6. Create a clear, descriptive title for the notes
+# Task
+Analyze the provided input and generate a comprehensive, structured study guide.
 
-Format the response as:
-TITLE: [Clear, descriptive title]
+# Guidelines
+1. **Source Fidelity & Expansion:** Preserve core concepts and specific terminology from the source. However, expand on fragmented thoughts by adding clear definitions, logical explanations, and illustrative examples to ensure the notes are "exam-ready."
+2. **Visual Interpretation:** If the input is an image or a description of a blackboard, prioritize capturing the flow of the lecture (e.g., process diagrams, lists, and labeled points).
+3. **Structure & Formatting:**
+    * Use a clear # Title (H1) for the main topic.
+    * Use ## and ### headers for logical hierarchy.
+    * Use bullet points for readability.
+4. **Mathematical Notation:** Use LaTeX for ALL mathematical or scientific formulas.
+    * Inline: $formula$
+    * Block: $$formula$$
+5. **Diagram Placeholders:**
+    * Use {{IMAGE: description}} for standard educational diagrams (e.g., "Human Heart").
+    * Use {{GENERATE: description}} for conceptual flowcharts or specific graphs.
+6. **Tone & Style:** Maintain a "Helpful Peer" tone—approachable, clear, and easy to read. Avoid overly dense academic jargon unless the jargon is a key term being defined.
+7. **Fallback Logic:** If the input is missing or extremely sparse, generate a comprehensive, college-level overview of the identified topic.
+8. **Safety:** If the content is inappropriate, harmful, or entirely nonsensical, respond ONLY with "REFUSE".
+
+# Output Format
+# [Descriptive Study Title]
 ---
-[Your markdown content with LaTeX and image placeholders]`;
+[Structured Markdown Content]
+`;
 
         contentParts.push(systemPrompt);
 
@@ -174,14 +188,30 @@ TITLE: [Clear, descriptive title]
         const response = await result.response;
         let generatedText = response.text();
 
+        // Check if AI refused to process content
+        if (generatedText.trim() === 'REFUSE' || generatedText.trim().startsWith('REFUSE')) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'The provided content was deemed inappropriate, harmful, or unsuitable for processing. Please review your input and try again with valid study materials.'
+            });
+        }
+
         // Extract title and content
         let title = 'Study Notes';
         let content = generatedText;
 
-        const titleMatch = generatedText.match(/^TITLE:\s*(.+?)[\r\n]+---[\r\n]+([\s\S]+)/);
+        // Match the expected format: # Title\n---\nContent
+        const titleMatch = generatedText.match(/^#\s+(.+?)[\r\n]+---[\r\n]+([\s\S]+)/);
         if (titleMatch) {
             title = titleMatch[1].trim();
             content = titleMatch[2].trim();
+        } else {
+            // Fallback: try to extract first H1 heading as title
+            const h1Match = generatedText.match(/^#\s+(.+?)[\r\n]+([\s\S]+)/);
+            if (h1Match) {
+                title = h1Match[1].trim();
+                content = h1Match[2].trim();
+            }
         }
 
         // Process image placeholders (search-based)
@@ -254,10 +284,25 @@ TITLE: [Clear, descriptive title]
             });
         }
 
-        res.status(500).json({
+        // Determine appropriate error message and status code
+        let statusCode = 500;
+        let errorMessage = 'Failed to process files';
+
+        if (error.name === 'ValidationError') {
+            statusCode = 400;
+            errorMessage = 'Invalid data provided';
+        } else if (error.message && error.message.includes('API')) {
+            errorMessage = 'AI processing service temporarily unavailable. Please try again later.';
+        } else if (error.code === 'ENOSPC') {
+            errorMessage = 'Server storage full. Please contact administrator.';
+        } else if (error.code === 'ENOENT') {
+            errorMessage = 'File system error occurred.';
+        }
+
+        res.status(statusCode).json({
             status: 'error',
-            message: 'Failed to process files',
-            error: error.message
+            message: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 });
@@ -265,6 +310,11 @@ TITLE: [Clear, descriptive title]
 // Get materials for a subject
 router.get('/:subjectId', verifyToken, async (req, res) => {
     try {
+        // Validate ObjectId format
+        if (!req.params.subjectId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid subject ID format' });
+        }
+
         const materials = await Material.find({ subjectId: req.params.subjectId })
             .sort({ createdAt: -1 })
             .populate('createdBy', 'name email');
@@ -272,13 +322,18 @@ router.get('/:subjectId', verifyToken, async (req, res) => {
         res.json({ status: 'success', materials });
     } catch (error) {
         console.error("Fetch Materials Error:", error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch materials' });
+        res.status(500).json({ status: 'error', message: 'Failed to fetch materials', details: error.message });
     }
 });
 
 // Get single material by ID
 router.get('/material/:id', verifyToken, async (req, res) => {
     try {
+        // Validate ObjectId format
+        if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid material ID format' });
+        }
+
         const material = await Material.findById(req.params.id)
             .populate('createdBy', 'name email')
             .populate('subjectId', 'name');
@@ -290,7 +345,7 @@ router.get('/material/:id', verifyToken, async (req, res) => {
         res.json({ status: 'success', material });
     } catch (error) {
         console.error("Fetch Material Error:", error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch material' });
+        res.status(500).json({ status: 'error', message: 'Failed to fetch material', details: error.message });
     }
 });
 
@@ -299,6 +354,11 @@ router.delete('/:materialId', verifyToken, async (req, res) => {
     const { materialId } = req.params;
 
     try {
+        // Validate ObjectId format
+        if (!materialId.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({ status: 'error', message: 'Invalid material ID format' });
+        }
+
         const material = await Material.findById(materialId);
         if (!material) {
             return res.status(404).json({ status: 'error', message: 'Material not found' });
@@ -314,7 +374,7 @@ router.delete('/:materialId', verifyToken, async (req, res) => {
         res.json({ status: 'success', message: 'Material deleted successfully' });
     } catch (error) {
         console.error("Delete Material Error:", error);
-        res.status(500).json({ status: 'error', message: 'Failed to delete material' });
+        res.status(500).json({ status: 'error', message: 'Failed to delete material', details: error.message });
     }
 });
 
