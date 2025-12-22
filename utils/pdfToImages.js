@@ -34,7 +34,13 @@ async function pdfToImages(pdfPath, outputDir) {
                 mimeType: 'image/png',
                 pageNumber: pngFiles.indexOf(pngFile) + 1
             });
-        }\n\n    } catch (error) {\n        // Return empty array - caller will fall back to text extraction\n    }\n\n    return images;
+        }
+
+    } catch (error) {
+        // Return empty array - caller will fall back to text extraction
+    }
+
+    return images;
 }
 
 /**
