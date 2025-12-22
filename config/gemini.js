@@ -10,17 +10,18 @@ const generationConfig = {
 };
 
 const MODEL_HIERARCHY = [
-    'gemini-2.5-flash',       // Primary: balanced speed/performance, 1M context
-    'gemini-2.0-flash',       // Fallback 1: reliable multimodal
-    'gemini-2.5-flash-lite',  // Fallback 2: high-throughput efficiency
-    'gemini-2.0-flash-lite',  // Fallback 3: lowest latency for simple tasks
+    'gemini-3-flash-preview', // 1. Best: 64K output cap + 220 tokens/sec speed. Fastest for long-form content.
+    'gemini-2.5-flash',       // 2. High Capacity: 64K output cap. Reliable for massive text generation.
+    'gemini-2.5-flash-lite',  // 3. Efficiency: 64K output cap. Lowest latency for high-volume long tasks.
+    'gemini-2.0-flash',       // 4. Low Cap: Limited to 8,192 output tokens. Fast, but cuts off much sooner.
+    'gemini-2.0-flash-lite',  // 5. Low Cap: Limited to 8,192 output tokens. Best for short, quick visual labels.
 ];
 
 
 // Default model for backwards compatibility
-const model = genAI.getGenerativeModel({ 
+const model = genAI.getGenerativeModel({
     model: MODEL_HIERARCHY[0],
-    generationConfig 
+    generationConfig
 });
 
 /**
@@ -32,36 +33,60 @@ const model = genAI.getGenerativeModel({
 async function generateWithFallback(content, options = {}) {
     let lastError = null;
     
-    for (const modelId of MODEL_HIERARCHY) {
+    console.log(`[Gemini] Starting generation with ${MODEL_HIERARCHY.length} models in hierarchy`);
+    console.log(`[Gemini] Models: ${MODEL_HIERARCHY.join(' → ')}`);
+
+    for (let i = 0; i < MODEL_HIERARCHY.length; i++) {
+        const modelId = MODEL_HIERARCHY[i];
+        const attemptNum = i + 1;
+        
         try {
-            const currentModel = genAI.getGenerativeModel({ 
+            console.log(`[Gemini] Attempt ${attemptNum}/${MODEL_HIERARCHY.length}: Trying ${modelId}...`);
+            
+            const currentModel = genAI.getGenerativeModel({
                 model: modelId,
                 generationConfig: { ...generationConfig, ...options }
             });
+            
+            const startTime = Date.now();
             const result = await currentModel.generateContent(content);
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+            // Check if we got a response
+            const response = await result.response;
+            const text = response.text();
+            const tokenCount = text.length;
             
-            // Log which model was used (helpful for debugging)
+            console.log(`✅ [Gemini] SUCCESS with ${modelId} (${duration}s, ${tokenCount} chars)`);
+            
             if (modelId !== MODEL_HIERARCHY[0]) {
-                console.log(`[Gemini] Used fallback model: ${modelId}`);
+                console.log(`⚠️  [Gemini] Note: Primary model failed, using fallback: ${modelId}`);
             }
-            
+
             return result;
         } catch (error) {
             lastError = error;
+            const errorMsg = error.message || error.toString();
+            const errorStatus = error.status || 'unknown';
             
+            console.error(`❌ [Gemini] FAILED with ${modelId} (Status: ${errorStatus})`);
+            console.error(`   Error: ${errorMsg.substring(0, 200)}`);
+
             // Only fallback on 503 (overloaded) or 429 (rate limit) errors
             if (error.status === 503 || error.status === 429) {
-                console.warn(`[Gemini] Model ${modelId} unavailable (${error.status}), trying next...`);
+                console.warn(`🔄 [Gemini] Falling back to next model (${attemptNum}/${MODEL_HIERARCHY.length} failed)...`);
                 continue;
             }
-            
+
             // For other errors, throw immediately
+            console.error(`💥 [Gemini] Non-recoverable error (${errorStatus}), stopping fallback`);
             throw error;
         }
     }
-    
+
     // All models failed
-    console.error('[Gemini] All models exhausted');
+    console.error(`💀 [Gemini] ALL ${MODEL_HIERARCHY.length} MODELS EXHAUSTED - complete failure`);
+    console.error(`   Last error: ${lastError?.message || lastError}`);
     throw lastError;
 }
 

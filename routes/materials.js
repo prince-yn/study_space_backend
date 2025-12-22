@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
+const { pdf } = require('pdf-to-img');
 const verifyToken = require('../auth_middleware');
 const upload = require('../config/multer');
 const { generateWithFallback } = require('../config/gemini');
@@ -34,9 +35,38 @@ const canUserEdit = async (spaceId, userId) => {
 };
 
 // Scan Notes - Upload files and convert to Markdown with LaTeX
-router.post('/create', verifyToken, upload.array('files', 20), async (req, res) => {
+router.post('/create', verifyToken, (req, res, next) => {
+    console.log('📝 Material creation endpoint hit');
+    
+    // Check if request is JSON with base64 files or multipart
+    if (req.headers['content-type']?.includes('application/json')) {
+        console.log('📝 JSON request with base64 files');
+        return next();
+    }
+    
+    // Handle multipart upload
+    console.log('📝 Multipart request, starting file upload...');
+    const uploadHandler = upload.array('files', 20);
+    uploadHandler(req, res, (err) => {
+        if (err) {
+            console.error('❌ Multer upload error:', err);
+            return res.status(400).json({ 
+                status: 'error', 
+                message: `File upload failed: ${err.message}` 
+            });
+        }
+        console.log('✅ Multer upload complete');
+        next();
+    });
+}, async (req, res) => {
     const uploadedFiles = req.files || [];
-    const { subjectId, prompt } = req.body;
+    const { subjectId, prompt, files: base64Files } = req.body;
+
+    console.log('📝 Material creation request received');
+    console.log(`   Files (multipart): ${uploadedFiles.length}`);
+    console.log(`   Files (base64): ${base64Files ? base64Files.length : 0}`);
+    console.log(`   Subject ID: ${subjectId}`);
+    console.log(`   Prompt: ${prompt ? prompt.substring(0, 100) : 'none'}`);
 
     try {
         if (!subjectId) {
@@ -102,139 +132,144 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
 
         contentParts.push(systemPrompt);
 
-        // Process uploaded files
+        // Handle base64 encoded files (from JSON)
+        if (base64Files && Array.isArray(base64Files)) {
+            console.log(`[Base64] Processing ${base64Files.length} encoded files`);
+            
+            for (const encodedFile of base64Files) {
+                const { filename, data, mimetype } = encodedFile;
+                
+                if (!filename || !data || !mimetype) {
+                    console.warn('[Base64] Skipping invalid file');
+                    continue;
+                }
+                
+                console.log(`[Base64] Processing: ${filename} (${mimetype})`);
+                
+                sourceFiles.push({
+                    originalName: filename,
+                    fileType: mimetype.includes('pdf') ? 'pdf' : 'image',
+                    size: data.length,
+                    url: 'base64'
+                });
+                
+                // Pass directly to Gemini as inline data
+                contentParts.push({
+                    inlineData: {
+                        data: data,
+                        mimeType: mimetype
+                    }
+                });
+            }
+        }
+
+        // Process uploaded files (multipart)
         for (const file of uploadedFiles) {
             const ext = path.extname(file.originalname).toLowerCase();
-            const isCloudinary = process.env.USE_CLOUDINARY === 'true';
+            const isPdf = ext === '.pdf';
 
-            // Get file URL/path with validation
-            const fileUrl = isCloudinary ? (file.path || file.url) : file.path;
+            console.log(`[File] Processing: ${file.originalname}, ext: ${ext}, size: ${file.size}, type: ${isPdf ? 'PDF' : 'Image'}`);
 
-            console.log(`[File] Processing: ${file.originalname}, ext: ${ext}, size: ${file.size}, cloudinary: ${isCloudinary}, url: ${fileUrl}`);
-
-            if (isCloudinary && !fileUrl) {
-                console.warn(`Cloudinary URL missing for file: ${file.originalname}`);
-                continue; // Skip this file
+            // For images, upload to Cloudinary if enabled
+            let fileUrl = null;
+            if (!isPdf && process.env.USE_CLOUDINARY === 'true') {
+                try {
+                    console.log(`[Image] Uploading ${file.originalname} to Cloudinary...`);
+                    const cloudinary = require('../config/cloudinary');
+                    
+                    // Upload from buffer
+                    const uploadResult = await new Promise((resolve, reject) => {
+                        const uploadStream = cloudinary.uploader.upload_stream(
+                            {
+                                folder: 'study_space',
+                                resource_type: 'auto'
+                            },
+                            (error, result) => {
+                                if (error) reject(error);
+                                else resolve(result);
+                            }
+                        );
+                        uploadStream.end(file.buffer);
+                    });
+                    
+                    fileUrl = uploadResult.secure_url;
+                    console.log(`[Image] Uploaded to: ${fileUrl}`);
+                } catch (uploadError) {
+                    console.error(`[Image] Upload failed: ${uploadError.message}`);
+                    fileUrl = 'memory';
+                }
+            } else {
+                fileUrl = isPdf ? 'memory' : (file.path || 'memory');
             }
 
             sourceFiles.push({
                 originalName: file.originalname,
-                fileType: ext.includes('pdf') ? 'pdf' : ext.match(/\.(jpg|jpeg|png|gif|webp)/) ? 'image' : 'other',
+                fileType: isPdf ? 'pdf' : 'image',
                 size: file.size,
                 url: fileUrl
             });
 
-            if (ext === '.pdf') {
-                // Pass PDF directly to Gemini as inline data (Gemini supports PDFs natively)
-                let pdfBuffer;
+            if (isPdf) {
+                // Process PDF directly from memory buffer
+                const pdfBuffer = file.buffer;
+                console.log(`[PDF] Processing from memory: ${file.originalname} (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
 
-                if (isCloudinary) {
-                    // Validate URL before downloading
-                    if (!fileUrl || fileUrl === 'undefined') {
-                        console.error(`[PDF] Invalid Cloudinary URL for: ${file.originalname}`);
-                        contentParts.push({
-                            text: `PDF "${file.originalname}" could not be processed (upload error).`
-                        });
-                        continue;
-                    }
-
-                    // Fix URL: ensure https
-                    let correctedUrl = fileUrl.replace(/^http:\/\//, 'https://');
-                    console.log(`[PDF] Downloading from: ${correctedUrl}`);
-
-                    // Download PDF from Cloudinary
-                    const axios = require('axios');
-                    let downloadSuccess = false;
+                // Convert PDF to images for better Gemini results
+                const pdfSizeMB = pdfBuffer.length / 1024 / 1024;
+                
+                // Gemini has a ~20MB limit for PDF files
+                if (pdfSizeMB > 20) {
+                    console.log(`[PDF] ${file.originalname} too large (${pdfSizeMB.toFixed(2)} MB), skipping`);
+                    contentParts.push({
+                        text: `PDF "${file.originalname}" is too large (${pdfSizeMB.toFixed(1)} MB). Please use a smaller file.`
+                    });
+                    continue;
+                }
+                
+                console.log(`[PDF] Converting ${file.originalname} (${pdfSizeMB.toFixed(2)} MB) to images for better AI processing...`);
+                
+                try {
+                    // Convert PDF to images
+                    const document = await pdf(pdfBuffer, { scale: 2.0 }); // 2x scale for better quality
+                    let pageNum = 0;
                     
-                    try {
-                        const response = await axios.get(correctedUrl, {
-                            responseType: 'arraybuffer',
-                            maxContentLength: 50 * 1024 * 1024,
-                            maxBodyLength: 50 * 1024 * 1024,
-                            timeout: 60000
-                        });
-                        pdfBuffer = Buffer.from(response.data);
-                        downloadSuccess = true;
-                        console.log(`[PDF] Downloaded successfully (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
-                    } catch (downloadError) {
-                        console.error(`[PDF] Download failed: ${downloadError.response?.status || downloadError.message}`);
+                    for await (const image of document) {
+                        pageNum++;
                         
-                        // If auth error, try /raw/ path
-                        if (downloadError.response?.status === 401 || downloadError.response?.status === 403) {
-                            console.log('[PDF] Trying /raw/ resource type...');
-                            try {
-                                const rawUrl = correctedUrl.replace('/image/upload/', '/raw/upload/');
-                                const response = await axios.get(rawUrl, {
-                                    responseType: 'arraybuffer',
-                                    maxContentLength: 50 * 1024 * 1024,
-                                    maxBodyLength: 50 * 1024 * 1024,
-                                    timeout: 60000
-                                });
-                                pdfBuffer = Buffer.from(response.data);
-                                downloadSuccess = true;
-                                console.log(`[PDF] Downloaded via /raw/ (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
-                            } catch (rawError) {
-                                console.error(`[PDF] /raw/ download failed: ${rawError.response?.status || rawError.message}`);
-                            }
+                        // Limit to first 20 pages
+                        if (pageNum > 20) {
+                            console.log(`[PDF] Stopping at page 20`);
+                            break;
                         }
+                        
+                        const base64Image = image.toString('base64');
+                        contentParts.push({
+                            inlineData: {
+                                data: base64Image,
+                                mimeType: 'image/png'
+                            }
+                        });
+                        
+                        console.log(`[PDF] Converted page ${pageNum} to image`);
                     }
                     
-                    if (!downloadSuccess) {
-                        console.error(`[PDF] All download attempts failed for ${file.originalname}`);
-                        contentParts.push({
-                            text: `PDF "${file.originalname}" could not be downloaded from storage.`
-                        });
-                        continue;
-                    }
-                } else {
-                    // Read from memory buffer or local file
-                    pdfBuffer = file.buffer || fs.readFileSync(file.path);
-                    console.log(`[PDF] Read from local: ${file.originalname} (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+                    console.log(`[PDF] Converted ${pageNum} pages to images`);
+                } catch (conversionError) {
+                    console.error(`[PDF] Conversion failed: ${conversionError.message}`);
+                    // Fallback: try sending PDF directly
+                    console.log(`[PDF] Falling back to direct PDF processing`);
+                    const base64Pdf = pdfBuffer.toString('base64');
+                    contentParts.push({
+                        inlineData: {
+                            data: base64Pdf,
+                            mimeType: 'application/pdf'
+                        }
+                    });
                 }
-
-                // Pass PDF directly to Gemini as inline data
-                const base64Pdf = pdfBuffer.toString('base64');
-                console.log(`[PDF] Passing ${file.originalname} to Gemini as inline data`);
-                contentParts.push({
-                    inlineData: {
-                        data: base64Pdf,
-                        mimeType: 'application/pdf'
-                    }
-                });
             } else if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                // Handle image
-                let imageBuffer;
-
-                if (isCloudinary) {
-                    // Validate URL before downloading
-                    if (!fileUrl || fileUrl === 'undefined') {
-                        console.error(`Invalid Cloudinary URL for image: ${file.originalname}`);
-                        continue;
-                    }
-
-                    // Fix protocol to https
-                    const correctedUrl = fileUrl.replace(/^http:\/\//, 'https://');
-                    console.log(`[Image] Downloading from: ${correctedUrl}`);
-
-                    // Download image from Cloudinary URL
-                    const axios = require('axios');
-                    try {
-                        const response = await axios.get(correctedUrl, {
-                            responseType: 'arraybuffer',
-                            maxContentLength: 50 * 1024 * 1024,
-                            maxBodyLength: 50 * 1024 * 1024,
-                            timeout: 60000
-                        });
-                        imageBuffer = Buffer.from(response.data);
-                        console.log(`[Image] Downloaded ${file.originalname} (${(imageBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
-                    } catch (downloadError) {
-                        console.error(`[Image] Failed to download ${file.originalname}: ${downloadError.response?.status || downloadError.message}`);
-                        continue;
-                    }
-                } else {
-                    // Read from memory buffer or local file
-                    imageBuffer = file.buffer || fs.readFileSync(file.path);
-                }
+                // Handle image - already in buffer from multer
+                const imageBuffer = file.buffer;
+                console.log(`[Image] Processing from memory: ${file.originalname} (${(imageBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
 
                 const base64Image = imageBuffer.toString('base64');
                 const mimeTypes = {
@@ -252,15 +287,6 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         mimeType: mimeType
                     }
                 });
-            }
-
-            // Clean up local file only (not Cloudinary)
-            if (!isCloudinary && file.path) {
-                try {
-                    fs.unlinkSync(file.path);
-                } catch (err) {
-                    console.error('Error deleting file:', err.message);
-                }
             }
         }
 
@@ -280,19 +306,42 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         }
 
         // Send to Gemini API with automatic fallback and timeout
+        console.log(`\n========== GEMINI REQUEST ==========`);
         console.log(`[Gemini] Sending ${contentParts.length} content parts to API...`);
+        
+        const contentSummary = contentParts.map(p => {
+            if (p.text) {
+                return `text(${p.text.length} chars)`;
+            } else if (p.inlineData) {
+                const sizeMB = (p.inlineData.data.length / 1024 / 1024).toFixed(2);
+                return `${p.inlineData.mimeType}(${sizeMB}MB)`;
+            }
+            return 'unknown';
+        });
+        console.log(`[Gemini] Content breakdown: ${contentSummary.join(', ')}`);
+        console.log(`[Gemini] Total parts: ${contentParts.length} (1 system prompt + ${contentParts.length - 1} files/prompts)`);
+        
         const startTime = Date.now();
         
         const result = await withTimeout(
             generateWithFallback(contentParts),
-            120000, // 2 minute timeout for Gemini
+            300000, // 5 minute timeout for large files
             'Gemini API generation'
         );
         
+        console.log(`[Gemini] Result received, parsing response...`);
         const response = await result.response;
         let generatedText = response.text();
         
-        console.log(`[Gemini] Response received in ${((Date.now() - startTime) / 1000).toFixed(1)}s, ${generatedText.length} chars`);
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+        const wordCount = generatedText.split(/\s+/).length;
+        console.log(`[Gemini] Response: ${generatedText.length} chars, ~${wordCount} words in ${duration}s`);
+        console.log(`========== GEMINI RESPONSE COMPLETE ==========\n`);
+        
+        // Print full output for debugging
+        console.log(`\n========== FULL GEMINI OUTPUT ==========`);
+        console.log(generatedText);
+        console.log(`========== END FULL OUTPUT ==========\n`);
 
         // Check if AI refused to process content
         if (generatedText.trim() === 'REFUSE' || generatedText.trim().startsWith('REFUSE')) {

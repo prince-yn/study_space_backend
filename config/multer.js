@@ -1,22 +1,8 @@
 const multer = require('multer');
-const CloudinaryStorage = require('multer-storage-cloudinary');
-const cloudinary = require('./cloudinary');
 
-
-const storage = process.env.USE_CLOUDINARY === 'true' 
-  ? new CloudinaryStorage({
-      cloudinary: cloudinary,
-      params: async (req, file) => {
-        const isPdf = file.mimetype === 'application/pdf';
-        return {
-          folder: 'study_space',
-          allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'webp'],
-          resource_type: isPdf ? 'raw' : 'auto',
-          access_mode: 'public'
-        };
-      }
-    })
-  : multer.memoryStorage(); // Use memory storage if Cloudinary not configured
+// Use memory storage for all files
+// We'll handle Cloudinary uploads manually in routes for better control
+const storage = multer.memoryStorage();
 
 // Configure multer for file uploads
 const upload = multer({ 
@@ -24,6 +10,10 @@ const upload = multer({
   limits: { 
     fileSize: 50 * 1024 * 1024, // 50MB limit per file
     files: 20 // Max 20 files
+  },
+  fileFilter: (req, file, cb) => {
+    console.log(`[Multer] Receiving: ${file.originalname} (${file.mimetype})`);
+    cb(null, true);
   }
 });
 

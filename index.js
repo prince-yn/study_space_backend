@@ -17,9 +17,20 @@ const chatRoutes = require('./routes/chat');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Increase server timeout to 5 minutes for large file processing
+const server = require('http').createServer(app);
+server.timeout = 300000; // 5 minutes
+
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increased for base64-encoded files
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Global request logger (for debugging)
+app.use((req, res, next) => {
+    console.log(`📥 ${req.method} ${req.path} from ${req.ip}`);
+    next();
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -28,7 +39,7 @@ app.use('/api/subjects', subjectsRoutes);
 app.use('/api/materials', materialsRoutes);
 app.use('/api/chat', chatRoutes);
 
-// Health check endpoint
+// Health check 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', message: 'StudySpace API is running' });
 });
@@ -42,7 +53,7 @@ app.use((req, res) => {
 connectDB();
 
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
