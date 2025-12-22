@@ -9,7 +9,8 @@ const storage = process.env.USE_CLOUDINARY === 'true'
       params: {
         folder: 'study_space',
         allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'webp'],
-        resource_type: 'auto'
+        resource_type: 'auto',
+        access_mode: 'public' // Ensure files are publicly accessible
       }
     })
   : multer.memoryStorage(); // Use memory storage if Cloudinary not configured

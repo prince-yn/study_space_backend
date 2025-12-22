@@ -128,9 +128,12 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         continue;
                     }
 
+                    console.log(`Downloading PDF from: ${fileUrl}`);
+
                     // Download PDF from Cloudinary URL
                     const axios = require('axios');
                     try {
+                        // First try direct URL
                         const response = await axios.get(fileUrl, {
                             responseType: 'arraybuffer',
                             maxContentLength: 50 * 1024 * 1024, // 50MB
@@ -138,11 +141,47 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         });
                         pdfBuffer = Buffer.from(response.data);
                     } catch (downloadError) {
-                        console.error(`Failed to download PDF from Cloudinary: ${downloadError.message}`);
-                        contentParts.push({
-                            text: `PDF "${file.originalname}" could not be downloaded.`
-                        });
-                        continue;
+                        // If 401/403, try generating a signed URL
+                        if (downloadError.response?.status === 401 || downloadError.response?.status === 403) {
+                            console.log('Trying signed URL for PDF...');
+                            try {
+                                const cloudinary = require('../config/cloudinary');
+                                // Extract public_id from URL
+                                const urlParts = fileUrl.split('/upload/');
+                                if (urlParts.length > 1) {
+                                    let publicId = urlParts[1].replace(/^v\d+\//, ''); // Remove version
+                                    publicId = publicId.replace(/\.[^/.]+$/, ''); // Remove extension
+                                    
+                                    const signedUrl = cloudinary.v2.url(publicId, {
+                                        resource_type: 'raw',
+                                        type: 'authenticated',
+                                        sign_url: true,
+                                        secure: true
+                                    });
+                                    
+                                    const response = await axios.get(signedUrl, {
+                                        responseType: 'arraybuffer',
+                                        maxContentLength: 50 * 1024 * 1024,
+                                        maxBodyLength: 50 * 1024 * 1024
+                                    });
+                                    pdfBuffer = Buffer.from(response.data);
+                                } else {
+                                    throw new Error('Could not extract public_id from URL');
+                                }
+                            } catch (signedError) {
+                                console.error(`Failed to download PDF with signed URL: ${signedError.message}`);
+                                contentParts.push({
+                                    text: `PDF "${file.originalname}" could not be downloaded (auth error).`
+                                });
+                                continue;
+                            }
+                        } else {
+                            console.error(`Failed to download PDF from Cloudinary: ${downloadError.message}`);
+                            contentParts.push({
+                                text: `PDF "${file.originalname}" could not be downloaded.`
+                            });
+                            continue;
+                        }
                     }
                 } else {
                     // Read from memory buffer or local file
