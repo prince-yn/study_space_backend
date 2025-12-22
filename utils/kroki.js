@@ -1,5 +1,8 @@
 const axios = require('axios');
 const zlib = require('zlib');
+const cloudinary = require('../config/cloudinary');
+const crypto = require('crypto');
+const { Readable } = require('stream');
 
 const KROKI_BASE_URL = 'https://kroki.io';
 
@@ -55,24 +58,115 @@ function encodeDiagramSource(source) {
  * @param {string} format - Output format (svg, png, pdf)
  * @returns {string} Kroki URL for the diagram
  */
-function getDiagramUrl(type, source, format = 'svg') {
+function getDiagramUrl(type, source, format = 'png') {
     const diagramType = DIAGRAM_TYPES[type.toLowerCase()] || type.toLowerCase();
     const encoded = encodeDiagramSource(source);
     return `${KROKI_BASE_URL}/${diagramType}/${format}/${encoded}`;
 }
 
 /**
- * Generate a diagram using Kroki API (POST method for reliability)
+ * Sanitize mermaid diagram source to fix common syntax issues
+ * @param {string} source - Raw mermaid source
+ * @returns {string} Sanitized source
+ */
+function sanitizeMermaidSource(source) {
+    let cleaned = source.trim();
+    
+    // Replace smart quotes and apostrophes with safe alternatives
+    cleaned = cleaned
+        .replace(/[\u2018\u2019]/g, '') // Remove smart single quotes
+        .replace(/[\u201C\u201D]/g, '"') // Replace smart double quotes
+        .replace(/'/g, '')  // Remove apostrophes (they break mermaid node labels)
+        .replace(/`/g, ''); // Remove backticks
+    
+    // Fix missing line breaks between mermaid statements
+    // When a ] or } or ) is followed by 2+ spaces and then a new node definition, insert a newline
+    cleaned = cleaned.replace(
+        /([}\]\)])(\s{2,})([A-Za-z_][A-Za-z0-9_]*(?:\[|\{|\())/g,
+        '$1\n    $3'
+    );
+    
+    // Ensure each statement line ends with a semicolon (required for proper parsing)
+    cleaned = cleaned.split('\n').map(line => {
+        const trimmed = line.trim();
+        // Skip empty lines, declarations, and lines that already end properly
+        if (!trimmed || 
+            trimmed.startsWith('graph ') || 
+            trimmed.startsWith('flowchart ') ||
+            trimmed.startsWith('sequenceDiagram') ||
+            trimmed.startsWith('classDiagram') ||
+            trimmed.startsWith('stateDiagram') ||
+            trimmed.startsWith('erDiagram') ||
+            trimmed.startsWith('gantt') ||
+            trimmed.startsWith('pie') ||
+            trimmed.startsWith('subgraph ') ||
+            trimmed === 'end' ||
+            trimmed.endsWith(';') ||
+            trimmed.endsWith('{') ||
+            trimmed.endsWith(':')) {
+            return line;
+        }
+        // If line contains a connection (-->, ---, ---|, -.->, etc.), add semicolon
+        if (/-->|---|--\||-.->|\|>|<\|/.test(trimmed)) {
+            return line + ';';
+        }
+        return line;
+    }).join('\n');
+    
+    return cleaned;
+}
+
+/**
+ * Upload a buffer to Cloudinary
+ * @param {Buffer} buffer - Image buffer to upload
+ * @param {string} folder - Cloudinary folder
+ * @param {string} publicId - Public ID for the image
+ * @returns {Promise<{url: string, publicId: string}>}
+ */
+async function uploadToCloudinary(buffer, folder = 'diagrams', publicId = null) {
+    return new Promise((resolve, reject) => {
+        const uploadOptions = {
+            folder: folder,
+            resource_type: 'image',
+            format: 'png',
+        };
+        
+        if (publicId) {
+            uploadOptions.public_id = publicId;
+        }
+        
+        const uploadStream = cloudinary.v2.uploader.upload_stream(
+            uploadOptions,
+            (error, result) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve({
+                        url: result.secure_url,
+                        publicId: result.public_id
+                    });
+                }
+            }
+        );
+        
+        // Convert buffer to stream and pipe to Cloudinary
+        const bufferStream = new Readable();
+        bufferStream.push(buffer);
+        bufferStream.push(null);
+        bufferStream.pipe(uploadStream);
+    });
+}
+
+/**
+ * Generate a diagram using Kroki API and upload to Cloudinary
  * @param {string} type - Diagram type
  * @param {string} source - Diagram source code
- * @param {string} format - Output format
  * @returns {Promise<{success: boolean, url?: string, error?: string}>}
  */
-async function generateDiagram(type, source, format = 'svg') {
+async function generateDiagram(type, source) {
     try {
         const diagramType = DIAGRAM_TYPES[type.toLowerCase()] || type.toLowerCase();
         
-        // Clean up the source - remove any problematic characters
         let cleanedSource = source.trim();
         
         if (!cleanedSource) {
@@ -82,97 +176,68 @@ async function generateDiagram(type, source, format = 'svg') {
             };
         }
         
-        // For mermaid diagrams, sanitize special characters in node labels
+        // Sanitize mermaid diagrams
         if (diagramType === 'mermaid') {
-            // Replace smart quotes and apostrophes with safe alternatives
-            cleanedSource = cleanedSource
-                .replace(/[\u2018\u2019]/g, '') // Remove smart single quotes
-                .replace(/[\u201C\u201D]/g, '"') // Replace smart double quotes
-                .replace(/'/g, '')  // Remove apostrophes (they break mermaid node labels)
-                .replace(/`/g, ''); // Remove backticks
-            
-            // Fix missing line breaks between mermaid statements
-            // When a ] is followed by 2+ spaces and then a new node definition, insert a newline
-            // This handles cases like: "A[label] --- B[label]    C[label] --- D"
-            // which should be: "A[label] --- B[label]\n    C[label] --- D"
-            cleanedSource = cleanedSource.replace(
-                /\](\s{2,})([A-Za-z_][A-Za-z0-9_]*(?:\[|\{|\())/g,
-                ']\n    $2'
-            );
-            
-            // Ensure each line ends with a semicolon (required for proper parsing with special chars)
-            // Split by lines, add semicolon if line contains a connection and doesn't end with ; or {
-            cleanedSource = cleanedSource.split('\n').map(line => {
-                const trimmed = line.trim();
-                // Skip empty lines, graph declarations, and subgraph/end lines
-                if (!trimmed || 
-                    trimmed.startsWith('graph ') || 
-                    trimmed.startsWith('flowchart ') ||
-                    trimmed.startsWith('subgraph ') ||
-                    trimmed === 'end' ||
-                    trimmed.endsWith(';') ||
-                    trimmed.endsWith('{')) {
-                    return line;
-                }
-                // If line contains a connection (-->, ---, ---|, etc.), add semicolon
-                if (/-->|---|\|/.test(trimmed)) {
-                    return line + ';';
-                }
-                return line;
-            }).join('\n');
+            cleanedSource = sanitizeMermaidSource(cleanedSource);
         }
         
-        // Always use POST method for reliability (avoids URL encoding issues)
+        console.log(`Generating ${diagramType} diagram as PNG...`);
+        
+        // Generate PNG using Kroki API
         const response = await axios.post(
-            `${KROKI_BASE_URL}/${diagramType}/${format}`,
+            `${KROKI_BASE_URL}/${diagramType}/png`,
             cleanedSource,
             {
                 headers: {
                     'Content-Type': 'text/plain'
                 },
+                responseType: 'arraybuffer', // Get binary data
                 timeout: 30000,
-                validateStatus: (status) => status < 500 // Don't throw on 4xx errors
+                validateStatus: (status) => status < 500
             }
         );
         
         // Check if request was successful
         if (response.status >= 400) {
-            const errorMessage = typeof response.data === 'string' 
-                ? response.data.substring(0, 200) 
-                : 'Invalid diagram syntax';
+            const errorText = Buffer.from(response.data).toString('utf-8');
+            const errorMessage = errorText.substring(0, 300);
+            console.error(`Kroki error (${response.status}):`, errorMessage);
             return {
                 success: false,
                 error: `Diagram syntax error: ${errorMessage}`
             };
         }
         
-        // Convert response to data URL for larger diagrams
-        if (format === 'svg') {
-            const svgContent = response.data;
-            const base64 = Buffer.from(svgContent).toString('base64');
-            return {
-                success: true,
-                url: `data:image/svg+xml;base64,${base64}`,
-                type: diagramType,
-                format: format
-            };
-        }
+        // Upload PNG to Cloudinary
+        const pngBuffer = Buffer.from(response.data);
+        console.log(`Uploading ${diagramType} diagram to Cloudinary (${pngBuffer.length} bytes)...`);
+        
+        // Generate a unique ID based on content hash
+        const hash = crypto.createHash('md5').update(cleanedSource).digest('hex').substring(0, 12);
+        const publicId = `diagram_${diagramType}_${hash}`;
+        
+        const cloudinaryResult = await uploadToCloudinary(pngBuffer, 'study_space/diagrams', publicId);
+        
+        console.log(`Diagram uploaded successfully: ${cloudinaryResult.url}`);
         
         return {
             success: true,
-            url: getDiagramUrl(type, source, format),
+            url: cloudinaryResult.url,
+            publicId: cloudinaryResult.publicId,
             type: diagramType,
-            format: format
+            format: 'png'
         };
         
     } catch (error) {
         const errorMessage = error.response?.data 
-            ? (typeof error.response.data === 'string' ? error.response.data.substring(0, 200) : error.message)
+            ? (Buffer.isBuffer(error.response.data) 
+                ? Buffer.from(error.response.data).toString('utf-8').substring(0, 200)
+                : error.message)
             : error.message;
-        console.error(`Kroki diagram generation error (${type}):`, errorMessage);
+        console.error(`Diagram generation error (${type}):`, errorMessage);
         return {
             success: false,
-            error: error.message
+            error: errorMessage
         };
     }
 }
@@ -186,7 +251,6 @@ function extractDiagramBlocks(content) {
     const diagrams = [];
     
     // Pattern 1: Fenced code blocks with diagram type
-    // ```mermaid ... ``` or ```plantuml ... ```
     const codeBlockPattern = /```(mermaid|plantuml|graphviz|dot|d2|blockdiag|seqdiag|actdiag|nwdiag|ditaa|erd|nomnoml|pikchr|svgbob|vega|vegalite|wavedrom)\n([\s\S]*?)```/gi;
     
     let match;
@@ -215,7 +279,7 @@ function extractDiagramBlocks(content) {
 }
 
 /**
- * Process content and convert all diagram blocks to Kroki URLs
+ * Process content and convert all diagram blocks to Cloudinary image URLs
  * @param {string} content - Markdown content with diagram blocks
  * @returns {Promise<{content: string, diagrams: Array}>}
  */
@@ -223,29 +287,38 @@ async function processDiagramBlocks(content) {
     const diagramBlocks = extractDiagramBlocks(content);
     const processedDiagrams = [];
     
+    if (diagramBlocks.length === 0) {
+        return { content, diagrams: [] };
+    }
+    
+    console.log(`Found ${diagramBlocks.length} diagram(s) to process...`);
+    
     // Sort by position in reverse to maintain correct positions during replacement
     diagramBlocks.sort((a, b) => b.position - a.position);
     
     for (const block of diagramBlocks) {
         console.log(`Processing ${block.type} diagram (${block.source.length} chars)...`);
         
-        const result = await generateDiagram(block.type, block.source, 'svg');
+        const result = await generateDiagram(block.type, block.source);
         
         if (result.success) {
             processedDiagrams.push({
                 type: block.type,
                 url: result.url,
+                publicId: result.publicId,
                 source: block.source
             });
             
-            // Replace the code block with an image
+            // Replace the code block with a markdown image
             const altText = `${block.type} diagram`;
             content = content.replace(
                 block.fullMatch,
                 `![${altText}](${result.url})`
             );
+            
+            console.log(`✓ ${block.type} diagram rendered and uploaded successfully`);
         } else {
-            console.error(`Failed to render ${block.type} diagram. Source preview:`, block.source.substring(0, 200));
+            console.error(`✗ Failed to render ${block.type} diagram:`, result.error);
             // Keep the code block but add an error note
             content = content.replace(
                 block.fullMatch,
@@ -270,5 +343,7 @@ module.exports = {
     extractDiagramBlocks,
     processDiagramBlocks,
     getAvailableDiagramTypes,
+    sanitizeMermaidSource,
+    uploadToCloudinary,
     DIAGRAM_TYPES
 };
