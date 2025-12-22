@@ -1,20 +1,27 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Initialize Gemini AI
+// Initialize Gemini AI with timeout settings
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// Generation config with reasonable limits
+const generationConfig = {
+    maxOutputTokens: 8192, // Limit output to avoid endless generation
+    temperature: 0.7,
+};
 
 const MODEL_HIERARCHY = [
-    'gemini-3-flash-preview', // Primary: fast frontier intelligence (Preview free tier)
-    'gemini-2.5-flash',       // Fallback 1: balanced speed/performance, 1M context
-    'gemini-2.0-flash',       // Fallback 2: reliable multimodal
-    'gemini-2.5-flash-lite',  // Fallback 3: high-throughput efficiency
-    'gemini-2.0-flash-lite',  // Fallback 4: lowest latency for simple tasks
+    'gemini-2.5-flash',       // Primary: balanced speed/performance, 1M context
+    'gemini-2.0-flash',       // Fallback 1: reliable multimodal
+    'gemini-2.5-flash-lite',  // Fallback 2: high-throughput efficiency
+    'gemini-2.0-flash-lite',  // Fallback 3: lowest latency for simple tasks
 ];
 
 
 // Default model for backwards compatibility
-const model = genAI.getGenerativeModel({ model: MODEL_HIERARCHY[0] });
+const model = genAI.getGenerativeModel({ 
+    model: MODEL_HIERARCHY[0],
+    generationConfig 
+});
 
 /**
  * Generate content with automatic model fallback on 503 errors
@@ -27,8 +34,11 @@ async function generateWithFallback(content, options = {}) {
     
     for (const modelId of MODEL_HIERARCHY) {
         try {
-            const currentModel = genAI.getGenerativeModel({ model: modelId });
-            const result = await currentModel.generateContent(content, options);
+            const currentModel = genAI.getGenerativeModel({ 
+                model: modelId,
+                generationConfig: { ...generationConfig, ...options }
+            });
+            const result = await currentModel.generateContent(content);
             
             // Log which model was used (helpful for debugging)
             if (modelId !== MODEL_HIERARCHY[0]) {
@@ -55,4 +65,4 @@ async function generateWithFallback(content, options = {}) {
     throw lastError;
 }
 
-module.exports = { genAI, model, generateWithFallback, MODEL_HIERARCHY };
+module.exports = { genAI, model, generateWithFallback, MODEL_HIERARCHY, generationConfig };

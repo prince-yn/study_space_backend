@@ -127,7 +127,7 @@ async function uploadToCloudinary(buffer, folder = 'diagrams', publicId = null) 
             uploadOptions.public_id = publicId;
         }
         
-        const uploadStream = cloudinary.v2.uploader.upload_stream(
+        const uploadStream = cloudinary.uploader.upload_stream(
             uploadOptions,
             (error, result) => {
                 if (error) {

@@ -13,6 +13,16 @@ const { searchImages, extractImagePlaceholders, replaceImagePlaceholders } = req
 const { pdfToImages, cleanupImages } = require('../utils/pdfToImages');
 const { processDiagramBlocks } = require('../utils/kroki');
 
+// Helper function to add timeout to promises
+const withTimeout = (promise, timeoutMs, operationName) => {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`${operationName} timed out after ${timeoutMs/1000}s`)), timeoutMs)
+        )
+    ]);
+};
+
 // Helper function to check if user can edit
 const canUserEdit = async (spaceId, userId) => {
     const space = await Space.findById(spaceId);
@@ -102,6 +112,8 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             // Get file URL/path with validation
             const fileUrl = isCloudinary ? (file.path || file.url) : file.path;
 
+            console.log(`[File] Processing: ${file.originalname}, ext: ${ext}, size: ${file.size}, cloudinary: ${isCloudinary}, url: ${fileUrl}`);
+
             if (isCloudinary && !fileUrl) {
                 console.warn(`Cloudinary URL missing for file: ${file.originalname}`);
                 continue; // Skip this file
@@ -115,98 +127,82 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             });
 
             if (ext === '.pdf') {
-                // For PDFs, we need to download from Cloudinary first if using cloud storage
+                // Pass PDF directly to Gemini as inline data (Gemini supports PDFs natively)
                 let pdfBuffer;
 
                 if (isCloudinary) {
                     // Validate URL before downloading
                     if (!fileUrl || fileUrl === 'undefined') {
-                        console.error(`Invalid Cloudinary URL for PDF: ${file.originalname}`);
+                        console.error(`[PDF] Invalid Cloudinary URL for: ${file.originalname}`);
                         contentParts.push({
                             text: `PDF "${file.originalname}" could not be processed (upload error).`
                         });
                         continue;
                     }
 
-                    // Fix URL: ensure https and correct resource type for PDFs
-                    let correctedUrl = fileUrl
-                        .replace(/^http:\/\//, 'https://')  // Fix protocol
-                        .replace('/image/upload/', '/raw/upload/');  // Fix resource type for PDFs
-                    
-                    console.log(`Downloading PDF from: ${correctedUrl}`);
+                    // Fix URL: ensure https
+                    let correctedUrl = fileUrl.replace(/^http:\/\//, 'https://');
+                    console.log(`[PDF] Downloading from: ${correctedUrl}`);
 
-                    // Download PDF from Cloudinary URL
+                    // Download PDF from Cloudinary
                     const axios = require('axios');
+                    let downloadSuccess = false;
+                    
                     try {
-                        // First try direct URL
                         const response = await axios.get(correctedUrl, {
                             responseType: 'arraybuffer',
-                            maxContentLength: 50 * 1024 * 1024, // 50MB
-                            maxBodyLength: 50 * 1024 * 1024
+                            maxContentLength: 50 * 1024 * 1024,
+                            maxBodyLength: 50 * 1024 * 1024,
+                            timeout: 60000
                         });
                         pdfBuffer = Buffer.from(response.data);
+                        downloadSuccess = true;
+                        console.log(`[PDF] Downloaded successfully (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
                     } catch (downloadError) {
-                        // If 401/403, try generating a signed URL
+                        console.error(`[PDF] Download failed: ${downloadError.response?.status || downloadError.message}`);
+                        
+                        // If auth error, try /raw/ path
                         if (downloadError.response?.status === 401 || downloadError.response?.status === 403) {
-                            console.log('Trying signed URL for PDF...');
+                            console.log('[PDF] Trying /raw/ resource type...');
                             try {
-                                const cloudinary = require('../config/cloudinary');
-                                // Extract public_id from URL
-                                const urlParts = fileUrl.split('/upload/');
-                                if (urlParts.length > 1) {
-                                    let publicId = urlParts[1].replace(/^v\d+\//, ''); // Remove version
-                                    publicId = publicId.replace(/\.[^/.]+$/, ''); // Remove extension
-                                    
-                                    const signedUrl = cloudinary.v2.url(publicId, {
-                                        resource_type: 'raw',
-                                        type: 'authenticated',
-                                        sign_url: true,
-                                        secure: true
-                                    });
-                                    
-                                    const response = await axios.get(signedUrl, {
-                                        responseType: 'arraybuffer',
-                                        maxContentLength: 50 * 1024 * 1024,
-                                        maxBodyLength: 50 * 1024 * 1024
-                                    });
-                                    pdfBuffer = Buffer.from(response.data);
-                                } else {
-                                    throw new Error('Could not extract public_id from URL');
-                                }
-                            } catch (signedError) {
-                                console.error(`Failed to download PDF with signed URL: ${signedError.message}`);
-                                contentParts.push({
-                                    text: `PDF "${file.originalname}" could not be downloaded (auth error).`
+                                const rawUrl = correctedUrl.replace('/image/upload/', '/raw/upload/');
+                                const response = await axios.get(rawUrl, {
+                                    responseType: 'arraybuffer',
+                                    maxContentLength: 50 * 1024 * 1024,
+                                    maxBodyLength: 50 * 1024 * 1024,
+                                    timeout: 60000
                                 });
-                                continue;
+                                pdfBuffer = Buffer.from(response.data);
+                                downloadSuccess = true;
+                                console.log(`[PDF] Downloaded via /raw/ (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+                            } catch (rawError) {
+                                console.error(`[PDF] /raw/ download failed: ${rawError.response?.status || rawError.message}`);
                             }
-                        } else {
-                            console.error(`Failed to download PDF from Cloudinary: ${downloadError.message}`);
-                            contentParts.push({
-                                text: `PDF "${file.originalname}" could not be downloaded.`
-                            });
-                            continue;
                         }
+                    }
+                    
+                    if (!downloadSuccess) {
+                        console.error(`[PDF] All download attempts failed for ${file.originalname}`);
+                        contentParts.push({
+                            text: `PDF "${file.originalname}" could not be downloaded from storage.`
+                        });
+                        continue;
                     }
                 } else {
                     // Read from memory buffer or local file
                     pdfBuffer = file.buffer || fs.readFileSync(file.path);
+                    console.log(`[PDF] Read from local: ${file.originalname} (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
                 }
 
-                // Try to extract text first (faster for text-based PDFs)
-                const pdfData = await pdfParse(pdfBuffer);
-
-                if (pdfData.text && pdfData.text.trim().length > 100) {
-                    // Good text extraction - use it
-                    contentParts.push({
-                        text: `PDF Content from "${file.originalname}":\n${pdfData.text}`
-                    });
-                } else {
-                    // Scanned PDF or no text - note it
-                    contentParts.push({
-                        text: `PDF "${file.originalname}" has minimal text (possibly scanned). Extracted: ${pdfData.text || 'none'}`
-                    });
-                }
+                // Pass PDF directly to Gemini as inline data
+                const base64Pdf = pdfBuffer.toString('base64');
+                console.log(`[PDF] Passing ${file.originalname} to Gemini as inline data`);
+                contentParts.push({
+                    inlineData: {
+                        data: base64Pdf,
+                        mimeType: 'application/pdf'
+                    }
+                });
             } else if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
                 // Handle image
                 let imageBuffer;
@@ -218,17 +214,23 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         continue;
                     }
 
+                    // Fix protocol to https
+                    const correctedUrl = fileUrl.replace(/^http:\/\//, 'https://');
+                    console.log(`[Image] Downloading from: ${correctedUrl}`);
+
                     // Download image from Cloudinary URL
                     const axios = require('axios');
                     try {
-                        const response = await axios.get(fileUrl, {
+                        const response = await axios.get(correctedUrl, {
                             responseType: 'arraybuffer',
                             maxContentLength: 50 * 1024 * 1024,
-                            maxBodyLength: 50 * 1024 * 1024
+                            maxBodyLength: 50 * 1024 * 1024,
+                            timeout: 60000
                         });
                         imageBuffer = Buffer.from(response.data);
+                        console.log(`[Image] Downloaded ${file.originalname} (${(imageBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
                     } catch (downloadError) {
-                        console.error(`Failed to download image from Cloudinary: ${downloadError.message}`);
+                        console.error(`[Image] Failed to download ${file.originalname}: ${downloadError.response?.status || downloadError.message}`);
                         continue;
                     }
                 } else {
@@ -279,10 +281,20 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             });
         }
 
-        // Send to Gemini API with automatic fallback
-        const result = await generateWithFallback(contentParts);
+        // Send to Gemini API with automatic fallback and timeout
+        console.log(`[Gemini] Sending ${contentParts.length} content parts to API...`);
+        const startTime = Date.now();
+        
+        const result = await withTimeout(
+            generateWithFallback(contentParts),
+            120000, // 2 minute timeout for Gemini
+            'Gemini API generation'
+        );
+        
         const response = await result.response;
         let generatedText = response.text();
+        
+        console.log(`[Gemini] Response received in ${((Date.now() - startTime) / 1000).toFixed(1)}s, ${generatedText.length} chars`);
 
         // Check if AI refused to process content
         if (generatedText.trim() === 'REFUSE' || generatedText.trim().startsWith('REFUSE')) {
@@ -377,7 +389,8 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         });
 
     } catch (error) {
-        console.error("Scan Notes Error:", error);
+        console.error("[Material Create] Error:", error.message);
+        console.error("[Material Create] Stack:", error.stack);
 
         // Clean up files if they exist
         if (uploadedFiles && uploadedFiles.length > 0) {
@@ -399,6 +412,9 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         if (error.name === 'ValidationError') {
             statusCode = 400;
             errorMessage = 'Invalid data provided';
+        } else if (error.message && error.message.includes('timed out')) {
+            statusCode = 504;
+            errorMessage = 'Processing took too long. Try with a smaller file or fewer pages.';
         } else if (error.message && error.message.includes('API')) {
             errorMessage = 'AI processing service temporarily unavailable. Please try again later.';
         } else if (error.code === 'ENOSPC') {
