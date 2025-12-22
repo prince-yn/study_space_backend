@@ -62,7 +62,7 @@ function getDiagramUrl(type, source, format = 'svg') {
 }
 
 /**
- * Generate a diagram using Kroki API (POST method for larger diagrams)
+ * Generate a diagram using Kroki API (POST method for reliability)
  * @param {string} type - Diagram type
  * @param {string} source - Diagram source code
  * @param {string} format - Output format
@@ -72,32 +72,79 @@ async function generateDiagram(type, source, format = 'svg') {
     try {
         const diagramType = DIAGRAM_TYPES[type.toLowerCase()] || type.toLowerCase();
         
-        // For smaller diagrams, use the URL method (faster, cacheable)
-        if (source.length < 2000) {
-            const url = getDiagramUrl(type, source, format);
-            
-            // Validate the diagram by making a HEAD request
-            await axios.head(url, { timeout: 10000 });
-            
+        // Clean up the source - remove any problematic characters
+        let cleanedSource = source.trim();
+        
+        if (!cleanedSource) {
             return {
-                success: true,
-                url: url,
-                type: diagramType,
-                format: format
+                success: false,
+                error: 'Empty diagram source'
             };
         }
         
-        // For larger diagrams, use POST API
+        // For mermaid diagrams, sanitize special characters in node labels
+        if (diagramType === 'mermaid') {
+            // Replace smart quotes and apostrophes with safe alternatives
+            cleanedSource = cleanedSource
+                .replace(/[\u2018\u2019]/g, '') // Remove smart single quotes
+                .replace(/[\u201C\u201D]/g, '"') // Replace smart double quotes
+                .replace(/'/g, '')  // Remove apostrophes (they break mermaid node labels)
+                .replace(/`/g, ''); // Remove backticks
+            
+            // Fix missing line breaks between mermaid statements
+            // When a ] is followed by 2+ spaces and then a new node definition, insert a newline
+            // This handles cases like: "A[label] --- B[label]    C[label] --- D"
+            // which should be: "A[label] --- B[label]\n    C[label] --- D"
+            cleanedSource = cleanedSource.replace(
+                /\](\s{2,})([A-Za-z_][A-Za-z0-9_]*(?:\[|\{|\())/g,
+                ']\n    $2'
+            );
+            
+            // Ensure each line ends with a semicolon (required for proper parsing with special chars)
+            // Split by lines, add semicolon if line contains a connection and doesn't end with ; or {
+            cleanedSource = cleanedSource.split('\n').map(line => {
+                const trimmed = line.trim();
+                // Skip empty lines, graph declarations, and subgraph/end lines
+                if (!trimmed || 
+                    trimmed.startsWith('graph ') || 
+                    trimmed.startsWith('flowchart ') ||
+                    trimmed.startsWith('subgraph ') ||
+                    trimmed === 'end' ||
+                    trimmed.endsWith(';') ||
+                    trimmed.endsWith('{')) {
+                    return line;
+                }
+                // If line contains a connection (-->, ---, ---|, etc.), add semicolon
+                if (/-->|---|\|/.test(trimmed)) {
+                    return line + ';';
+                }
+                return line;
+            }).join('\n');
+        }
+        
+        // Always use POST method for reliability (avoids URL encoding issues)
         const response = await axios.post(
             `${KROKI_BASE_URL}/${diagramType}/${format}`,
-            source,
+            cleanedSource,
             {
                 headers: {
                     'Content-Type': 'text/plain'
                 },
-                timeout: 30000
+                timeout: 30000,
+                validateStatus: (status) => status < 500 // Don't throw on 4xx errors
             }
         );
+        
+        // Check if request was successful
+        if (response.status >= 400) {
+            const errorMessage = typeof response.data === 'string' 
+                ? response.data.substring(0, 200) 
+                : 'Invalid diagram syntax';
+            return {
+                success: false,
+                error: `Diagram syntax error: ${errorMessage}`
+            };
+        }
         
         // Convert response to data URL for larger diagrams
         if (format === 'svg') {
@@ -119,7 +166,10 @@ async function generateDiagram(type, source, format = 'svg') {
         };
         
     } catch (error) {
-        console.error(`Kroki diagram generation error (${type}):`, error.message);
+        const errorMessage = error.response?.data 
+            ? (typeof error.response.data === 'string' ? error.response.data.substring(0, 200) : error.message)
+            : error.message;
+        console.error(`Kroki diagram generation error (${type}):`, errorMessage);
         return {
             success: false,
             error: error.message
@@ -177,7 +227,7 @@ async function processDiagramBlocks(content) {
     diagramBlocks.sort((a, b) => b.position - a.position);
     
     for (const block of diagramBlocks) {
-        console.log(`Processing ${block.type} diagram...`);
+        console.log(`Processing ${block.type} diagram (${block.source.length} chars)...`);
         
         const result = await generateDiagram(block.type, block.source, 'svg');
         
@@ -195,6 +245,7 @@ async function processDiagramBlocks(content) {
                 `![${altText}](${result.url})`
             );
         } else {
+            console.error(`Failed to render ${block.type} diagram. Source preview:`, block.source.substring(0, 200));
             // Keep the code block but add an error note
             content = content.replace(
                 block.fullMatch,
