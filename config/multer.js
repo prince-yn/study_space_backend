@@ -17,7 +17,10 @@ const storage = process.env.USE_CLOUDINARY === 'true'
 // Configure multer for file uploads
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { 
+    fileSize: 50 * 1024 * 1024, // 50MB limit per file
+    files: 20 // Max 20 files
+  }
 });
 
 module.exports = upload;

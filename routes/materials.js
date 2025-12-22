@@ -91,11 +91,19 @@ Analyze the provided input and generate a comprehensive, structured study guide.
             const ext = path.extname(file.originalname).toLowerCase();
             const isCloudinary = process.env.USE_CLOUDINARY === 'true';
 
+            // Get file URL/path with validation
+            const fileUrl = isCloudinary ? (file.path || file.url) : file.path;
+            
+            if (isCloudinary && !fileUrl) {
+                console.warn(`Cloudinary URL missing for file: ${file.originalname}`);
+                continue; // Skip this file
+            }
+
             sourceFiles.push({
                 originalName: file.originalname,
                 fileType: ext.includes('pdf') ? 'pdf' : ext.match(/\.(jpg|jpeg|png|gif|webp)/) ? 'image' : 'other',
                 size: file.size,
-                url: isCloudinary ? file.path : undefined
+                url: fileUrl
             });
 
             if (ext === '.pdf') {
@@ -103,10 +111,31 @@ Analyze the provided input and generate a comprehensive, structured study guide.
                 let pdfBuffer;
                 
                 if (isCloudinary) {
+                    // Validate URL before downloading
+                    if (!fileUrl || fileUrl === 'undefined') {
+                        console.error(`Invalid Cloudinary URL for PDF: ${file.originalname}`);
+                        contentParts.push({
+                            text: `PDF "${file.originalname}" could not be processed (upload error).`
+                        });
+                        continue;
+                    }
+                    
                     // Download PDF from Cloudinary URL
                     const axios = require('axios');
-                    const response = await axios.get(file.path, { responseType: 'arraybuffer' });
-                    pdfBuffer = Buffer.from(response.data);
+                    try {
+                        const response = await axios.get(fileUrl, { 
+                            responseType: 'arraybuffer',
+                            maxContentLength: 50 * 1024 * 1024, // 50MB
+                            maxBodyLength: 50 * 1024 * 1024
+                        });
+                        pdfBuffer = Buffer.from(response.data);
+                    } catch (downloadError) {
+                        console.error(`Failed to download PDF from Cloudinary: ${downloadError.message}`);
+                        contentParts.push({
+                            text: `PDF "${file.originalname}" could not be downloaded.`
+                        });
+                        continue;
+                    }
                 } else {
                     // Read from memory buffer or local file
                     pdfBuffer = file.buffer || fs.readFileSync(file.path);
@@ -131,10 +160,25 @@ Analyze the provided input and generate a comprehensive, structured study guide.
                 let imageBuffer;
                 
                 if (isCloudinary) {
+                    // Validate URL before downloading
+                    if (!fileUrl || fileUrl === 'undefined') {
+                        console.error(`Invalid Cloudinary URL for image: ${file.originalname}`);
+                        continue;
+                    }
+                    
                     // Download image from Cloudinary URL
                     const axios = require('axios');
-                    const response = await axios.get(file.path, { responseType: 'arraybuffer' });
-                    imageBuffer = Buffer.from(response.data);
+                    try {
+                        const response = await axios.get(fileUrl, { 
+                            responseType: 'arraybuffer',
+                            maxContentLength: 50 * 1024 * 1024,
+                            maxBodyLength: 50 * 1024 * 1024
+                        });
+                        imageBuffer = Buffer.from(response.data);
+                    } catch (downloadError) {
+                        console.error(`Failed to download image from Cloudinary: ${downloadError.message}`);
+                        continue;
+                    }
                 } else {
                     // Read from memory buffer or local file
                     imageBuffer = file.buffer || fs.readFileSync(file.path);
