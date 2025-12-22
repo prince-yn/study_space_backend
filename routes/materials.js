@@ -11,13 +11,13 @@ const Subject = require('../models/Subject');
 const Space = require('../models/Space');
 const { searchImages, extractImagePlaceholders, replaceImagePlaceholders } = require('../utils/imageSearch');
 const { pdfToImages, cleanupImages } = require('../utils/pdfToImages');
-const { processImageGenerationRequests } = require('../utils/imageGeneration');
+const { processDiagramBlocks } = require('../utils/kroki');
 
 // Helper function to check if user can edit
 const canUserEdit = async (spaceId, userId) => {
     const space = await Space.findById(spaceId);
     if (!space) return false;
-    
+
     const userIdStr = userId.toString();
     const isOwner = space.owner.toString() === userIdStr;
     const isAdmin = space.admins.some(admin => admin.toString() === userIdStr);
@@ -54,34 +54,42 @@ router.post('/create', verifyToken, upload.array('files', 20), async (req, res) 
         let contentParts = [];
         let sourceFiles = [];
 
-        // Enhanced system prompt with image placeholder instructions
+
         const systemPrompt = `# Role
-You are an expert Academic Assistant specializing in transforming fragmented study materials (rough notes, blackboard photos, or transcripts) into high-quality, student-friendly Markdown notes.
+You are an expert Academic Assistant that transforms rough study materials (blackboard photos, scribbled notes, or transcripts) into high-quality, structured Markdown notes.
 
 # Task
-Analyze the provided input and generate a comprehensive, structured study guide.
+Analyze the input and generate a comprehensive study guide. Expand fragmented thoughts into clear explanations and solve any homework questions or math problems found in the notes.
 
 # Guidelines
-1. **Source Fidelity & Expansion:** Preserve core concepts and specific terminology from the source. However, expand on fragmented thoughts by adding clear definitions, logical explanations, and illustrative examples to ensure the notes are "exam-ready."
-2. **Visual Interpretation:** If the input is an image or a description of a blackboard, prioritize capturing the flow of the lecture (e.g., process diagrams, lists, and labeled points).
-3. **Structure & Formatting:**
-    * Use a clear # Title (H1) for the main topic.
-    * Use ## and ### headers for logical hierarchy.
-    * Use bullet points for readability.
-4. **Mathematical Notation:** Use LaTeX for ALL mathematical or scientific formulas.
-    * Inline: $formula$
-    * Block: $$formula$$
-5. **Diagram Placeholders:**
-    * Use {{IMAGE: description}} for standard educational diagrams (e.g., "Human Heart").
-    * Use {{GENERATE: description}} for conceptual flowcharts or specific graphs.
-6. **Tone & Style:** Maintain a "Helpful Peer" tone—approachable, clear, and easy to read. Avoid overly dense academic jargon unless the jargon is a key term being defined.
-7. **Fallback Logic:** If the input is missing or extremely sparse, generate a comprehensive, college-level overview of the identified topic.
-8. **Safety:** If the content is inappropriate, harmful, or entirely nonsensical, respond ONLY with "REFUSE".
+1. **Formatting:** Use the full range of Markdown. Use # for titles, ## and ### for hierarchy, and **bold** for key terms. Use tables for comparisons and --- (horizontal rules) to separate different topics or sections.
+2. **Mathematical Notation:** Use LaTeX for all formulas and variables.
+   * Inline: $E = mc^2$
+   * Block: $$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$
+3. **Diagrams (Kroki.io):** Use code blocks to recreate sketches or logic. Use the best engine for the data (mermaid, plantuml, graphviz, wavedrom, packetdiag, etc.).
+   * **Example:**
+     \`\`\`mermaid
+     graph TD;
+     A[Light] --> B{Photosynthesis};
+     B --> C[Oxygen];
+     B --> D[Glucose];
+     \`\`\`
+4. **Visual Placeholders:** Use {{IMAGE: description}} for graphs, anatomy, or complex photos that cannot be coded.
+   * **Example:** {{IMAGE: supply and demand curve graph}} or {{IMAGE: structure of a plant cell}}.
+5. **Tone & Style:** Maintain a "Helpful Peer" tone—approachable, clear, and easy to read. Avoid dense jargon unless it is a key term being defined.
+6. **Fallback Logic:** If the input is missing, blurry, or extremely sparse, generate a comprehensive college-level overview of the identified topic so the user still gets a useful study guide.
+7. **Safety:** If the content is inappropriate, harmful, or nonsensical, respond ONLY with "REFUSE".
 
 # Output Format
-# [Descriptive Study Title]
+# [Title]
+> **Summary:** A brief overview of the notes.
+
 ---
-[Structured Markdown Content]
+[Structured Markdown Content with Diagrams and Placeholders]
+
+---
+## Solutions
+[Step-by-step solutions for any problems found in the notes]
 `;
 
         contentParts.push(systemPrompt);
@@ -93,7 +101,7 @@ Analyze the provided input and generate a comprehensive, structured study guide.
 
             // Get file URL/path with validation
             const fileUrl = isCloudinary ? (file.path || file.url) : file.path;
-            
+
             if (isCloudinary && !fileUrl) {
                 console.warn(`Cloudinary URL missing for file: ${file.originalname}`);
                 continue; // Skip this file
@@ -109,7 +117,7 @@ Analyze the provided input and generate a comprehensive, structured study guide.
             if (ext === '.pdf') {
                 // For PDFs, we need to download from Cloudinary first if using cloud storage
                 let pdfBuffer;
-                
+
                 if (isCloudinary) {
                     // Validate URL before downloading
                     if (!fileUrl || fileUrl === 'undefined') {
@@ -119,11 +127,11 @@ Analyze the provided input and generate a comprehensive, structured study guide.
                         });
                         continue;
                     }
-                    
+
                     // Download PDF from Cloudinary URL
                     const axios = require('axios');
                     try {
-                        const response = await axios.get(fileUrl, { 
+                        const response = await axios.get(fileUrl, {
                             responseType: 'arraybuffer',
                             maxContentLength: 50 * 1024 * 1024, // 50MB
                             maxBodyLength: 50 * 1024 * 1024
@@ -143,7 +151,7 @@ Analyze the provided input and generate a comprehensive, structured study guide.
 
                 // Try to extract text first (faster for text-based PDFs)
                 const pdfData = await pdfParse(pdfBuffer);
-                
+
                 if (pdfData.text && pdfData.text.trim().length > 100) {
                     // Good text extraction - use it
                     contentParts.push({
@@ -158,18 +166,18 @@ Analyze the provided input and generate a comprehensive, structured study guide.
             } else if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
                 // Handle image
                 let imageBuffer;
-                
+
                 if (isCloudinary) {
                     // Validate URL before downloading
                     if (!fileUrl || fileUrl === 'undefined') {
                         console.error(`Invalid Cloudinary URL for image: ${file.originalname}`);
                         continue;
                     }
-                    
+
                     // Download image from Cloudinary URL
                     const axios = require('axios');
                     try {
-                        const response = await axios.get(fileUrl, { 
+                        const response = await axios.get(fileUrl, {
                             responseType: 'arraybuffer',
                             maxContentLength: 50 * 1024 * 1024,
                             maxBodyLength: 50 * 1024 * 1024
@@ -183,7 +191,7 @@ Analyze the provided input and generate a comprehensive, structured study guide.
                     // Read from memory buffer or local file
                     imageBuffer = file.buffer || fs.readFileSync(file.path);
                 }
-                
+
                 const base64Image = imageBuffer.toString('base64');
                 const mimeTypes = {
                     '.jpg': 'image/jpeg',
@@ -221,9 +229,9 @@ Analyze the provided input and generate a comprehensive, structured study guide.
 
         // Check if we have any content
         if (contentParts.length === 1) { // Only system prompt
-            return res.status(400).json({ 
-                status: 'error', 
-                message: 'Please provide at least one file or a text prompt' 
+            return res.status(400).json({
+                status: 'error',
+                message: 'Please provide at least one file or a text prompt'
             });
         }
 
@@ -244,19 +252,33 @@ Analyze the provided input and generate a comprehensive, structured study guide.
         let title = 'Study Notes';
         let content = generatedText;
 
-        // Match the expected format: # Title\n---\nContent
-        const titleMatch = generatedText.match(/^#\s+(.+?)[\r\n]+---[\r\n]+([\s\S]+)/);
+        // Match the expected format: # Title\n> **Summary:** ...\n---\nContent
+        // First try: title followed by summary blockquote then separator
+        let titleMatch = generatedText.match(/^#\s+(.+?)[\r\n]+>[\s\S]*?[\r\n]+---[\r\n]+([\s\S]+)/);
+        
         if (titleMatch) {
             title = titleMatch[1].trim();
             content = titleMatch[2].trim();
         } else {
-            // Fallback: try to extract first H1 heading as title
-            const h1Match = generatedText.match(/^#\s+(.+?)[\r\n]+([\s\S]+)/);
-            if (h1Match) {
-                title = h1Match[1].trim();
-                content = h1Match[2].trim();
+            // Second try: title followed by separator
+            titleMatch = generatedText.match(/^#\s+(.+?)[\r\n]+---[\r\n]+([\s\S]+)/);
+            if (titleMatch) {
+                title = titleMatch[1].trim();
+                content = titleMatch[2].trim();
+            } else {
+                // Fallback: try to extract first H1 heading as title
+                const h1Match = generatedText.match(/^#\s+(.+?)[\r\n]+([\s\S]+)/);
+                if (h1Match) {
+                    title = h1Match[1].trim();
+                    content = h1Match[2].trim();
+                }
             }
         }
+
+        // Process Kroki diagrams (mermaid, plantuml, graphviz, etc.)
+        const diagramResult = await processDiagramBlocks(content);
+        content = diagramResult.content;
+        const diagrams = diagramResult.diagrams;
 
         // Process image placeholders (search-based)
         const placeholders = extractImagePlaceholders(content);
@@ -264,7 +286,7 @@ Analyze the provided input and generate a comprehensive, structured study guide.
 
         if (placeholders.length > 0) {
             console.log(`Found ${placeholders.length} image search placeholders`);
-            
+
             for (const placeholder of placeholders) {
                 const searchResults = await searchImages(placeholder.description, 1);
                 if (searchResults.length > 0) {
@@ -281,13 +303,11 @@ Analyze the provided input and generate a comprehensive, structured study guide.
             content = replaceImagePlaceholders(content, images);
         }
 
-        // Process AI-generated images
-        const generationResult = await processImageGenerationRequests(content);
-        content = generationResult.content;
-        const generatedImages = generationResult.generatedImages;
-
-        // Combine all images
-        const allImages = [...images, ...generatedImages];
+        // Combine diagrams and searched images
+        const allImages = [
+            ...images,
+            ...diagrams.map(d => ({ type: 'diagram', diagramType: d.type, url: d.url }))
+        ];
 
         // Save to database
         const material = new Material({
