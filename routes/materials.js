@@ -5,7 +5,7 @@ const path = require('path');
 const pdfParse = require('pdf-parse');
 const verifyToken = require('../auth_middleware');
 const upload = require('../config/multer');
-const { model } = require('../config/gemini');
+const { generateWithFallback } = require('../config/gemini');
 const Material = require('../models/Material');
 const Subject = require('../models/Subject');
 const Space = require('../models/Space');
@@ -235,8 +235,8 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             });
         }
 
-        // Send to Gemini API
-        const result = await model.generateContent(contentParts);
+        // Send to Gemini API with automatic fallback
+        const result = await generateWithFallback(contentParts);
         const response = await result.response;
         let generatedText = response.text();
 

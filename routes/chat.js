@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const verifyToken = require('../auth_middleware');
-const { model } = require('../config/gemini');
+const { generateWithFallback } = require('../config/gemini');
 const Material = require('../models/Material');
 
 // Context-aware chat endpoint
@@ -41,8 +41,8 @@ Based on this material, please answer the following question in a clear, educati
         conversationParts.push(contextPrompt);
         conversationParts.push(`\n\nStudent's Question: ${question}`);
 
-        // Send to Gemini
-        const result = await model.generateContent(conversationParts.join('\n'));
+        // Send to Gemini with automatic fallback
+        const result = await generateWithFallback(conversationParts.join('\n'));
         const response = await result.response;
         const answer = response.text();
 
@@ -93,7 +93,8 @@ router.post('/conversation', verifyToken, async (req, res) => {
             }
         });
 
-        const result = await model.generateContent(conversationParts.join('\n'));
+        // Send to Gemini with automatic fallback
+        const result = await generateWithFallback(conversationParts.join('\n'));
         const response = await result.response;
         const answer = response.text();
 
