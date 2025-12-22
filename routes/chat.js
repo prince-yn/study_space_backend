@@ -52,11 +52,9 @@ Based on this material, please answer the following question in a clear, educati
         });
 
     } catch (error) {
-        console.error("Chat Error:", error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to process question',
-            error: error.message
+            message: 'Failed to process question'
         });
     }
 });
@@ -104,11 +102,9 @@ router.post('/conversation', verifyToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Conversation Error:", error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to process conversation',
-            error: error.message
+            message: 'Failed to process conversation'
         });
     }
 });

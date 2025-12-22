@@ -28,7 +28,6 @@ async function searchImages(query, numResults = 1) {
         }
         return [];
     } catch (error) {
-        console.error('Image search error:', error.message);
         return [];
     }
 }

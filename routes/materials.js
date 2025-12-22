@@ -36,37 +36,23 @@ const canUserEdit = async (spaceId, userId) => {
 
 // Scan Notes - Upload files and convert to Markdown with LaTeX
 router.post('/create', verifyToken, (req, res, next) => {
-    console.log('📝 Material creation endpoint hit');
-    
-    // Check if request is JSON with base64 files or multipart
     if (req.headers['content-type']?.includes('application/json')) {
-        console.log('📝 JSON request with base64 files');
         return next();
     }
     
-    // Handle multipart upload
-    console.log('📝 Multipart request, starting file upload...');
     const uploadHandler = upload.array('files', 20);
     uploadHandler(req, res, (err) => {
         if (err) {
-            console.error('❌ Multer upload error:', err);
             return res.status(400).json({ 
                 status: 'error', 
                 message: `File upload failed: ${err.message}` 
             });
         }
-        console.log('✅ Multer upload complete');
         next();
     });
 }, async (req, res) => {
     const uploadedFiles = req.files || [];
     const { subjectId, prompt, files: base64Files } = req.body;
-
-    console.log('📝 Material creation request received');
-    console.log(`   Files (multipart): ${uploadedFiles.length}`);
-    console.log(`   Files (base64): ${base64Files ? base64Files.length : 0}`);
-    console.log(`   Subject ID: ${subjectId}`);
-    console.log(`   Prompt: ${prompt ? prompt.substring(0, 100) : 'none'}`);
 
     try {
         if (!subjectId) {
@@ -134,17 +120,12 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
 
         // Handle base64 encoded files (from JSON)
         if (base64Files && Array.isArray(base64Files)) {
-            console.log(`[Base64] Processing ${base64Files.length} encoded files`);
-            
             for (const encodedFile of base64Files) {
                 const { filename, data, mimetype } = encodedFile;
                 
                 if (!filename || !data || !mimetype) {
-                    console.warn('[Base64] Skipping invalid file');
                     continue;
                 }
-                
-                console.log(`[Base64] Processing: ${filename} (${mimetype})`);
                 
                 sourceFiles.push({
                     originalName: filename,
@@ -153,7 +134,6 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                     url: 'base64'
                 });
                 
-                // Pass directly to Gemini as inline data
                 contentParts.push({
                     inlineData: {
                         data: data,
@@ -168,16 +148,11 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             const ext = path.extname(file.originalname).toLowerCase();
             const isPdf = ext === '.pdf';
 
-            console.log(`[File] Processing: ${file.originalname}, ext: ${ext}, size: ${file.size}, type: ${isPdf ? 'PDF' : 'Image'}`);
-
-            // For images, upload to Cloudinary if enabled
             let fileUrl = null;
             if (!isPdf && process.env.USE_CLOUDINARY === 'true') {
                 try {
-                    console.log(`[Image] Uploading ${file.originalname} to Cloudinary...`);
                     const cloudinary = require('../config/cloudinary');
                     
-                    // Upload from buffer
                     const uploadResult = await new Promise((resolve, reject) => {
                         const uploadStream = cloudinary.uploader.upload_stream(
                             {
@@ -193,9 +168,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                     });
                     
                     fileUrl = uploadResult.secure_url;
-                    console.log(`[Image] Uploaded to: ${fileUrl}`);
                 } catch (uploadError) {
-                    console.error(`[Image] Upload failed: ${uploadError.message}`);
                     fileUrl = 'memory';
                 }
             } else {
@@ -210,35 +183,24 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             });
 
             if (isPdf) {
-                // Process PDF directly from memory buffer
                 const pdfBuffer = file.buffer;
-                console.log(`[PDF] Processing from memory: ${file.originalname} (${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
-
-                // Convert PDF to images for better Gemini results
                 const pdfSizeMB = pdfBuffer.length / 1024 / 1024;
                 
-                // Gemini has a ~20MB limit for PDF files
                 if (pdfSizeMB > 20) {
-                    console.log(`[PDF] ${file.originalname} too large (${pdfSizeMB.toFixed(2)} MB), skipping`);
                     contentParts.push({
                         text: `PDF "${file.originalname}" is too large (${pdfSizeMB.toFixed(1)} MB). Please use a smaller file.`
                     });
                     continue;
                 }
                 
-                console.log(`[PDF] Converting ${file.originalname} (${pdfSizeMB.toFixed(2)} MB) to images for better AI processing...`);
-                
                 try {
-                    // Convert PDF to images
-                    const document = await pdf(pdfBuffer, { scale: 2.0 }); // 2x scale for better quality
+                    const document = await pdf(pdfBuffer, { scale: 2.0 });
                     let pageNum = 0;
                     
                     for await (const image of document) {
                         pageNum++;
                         
-                        // Limit to first 20 pages
                         if (pageNum > 20) {
-                            console.log(`[PDF] Stopping at page 20`);
                             break;
                         }
                         
@@ -249,15 +211,8 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                                 mimeType: 'image/png'
                             }
                         });
-                        
-                        console.log(`[PDF] Converted page ${pageNum} to image`);
                     }
-                    
-                    console.log(`[PDF] Converted ${pageNum} pages to images`);
                 } catch (conversionError) {
-                    console.error(`[PDF] Conversion failed: ${conversionError.message}`);
-                    // Fallback: try sending PDF directly
-                    console.log(`[PDF] Falling back to direct PDF processing`);
                     const base64Pdf = pdfBuffer.toString('base64');
                     contentParts.push({
                         inlineData: {
@@ -267,9 +222,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                     });
                 }
             } else if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                // Handle image - already in buffer from multer
                 const imageBuffer = file.buffer;
-                console.log(`[Image] Processing from memory: ${file.originalname} (${(imageBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
 
                 const base64Image = imageBuffer.toString('base64');
                 const mimeTypes = {
@@ -298,52 +251,22 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         }
 
         // Check if we have any content
-        if (contentParts.length === 1) { // Only system prompt
+        if (contentParts.length === 1) {
             return res.status(400).json({
                 status: 'error',
                 message: 'Please provide at least one file or a text prompt'
             });
         }
 
-        // Send to Gemini API with automatic fallback and timeout
-        console.log(`\n========== GEMINI REQUEST ==========`);
-        console.log(`[Gemini] Sending ${contentParts.length} content parts to API...`);
-        
-        const contentSummary = contentParts.map(p => {
-            if (p.text) {
-                return `text(${p.text.length} chars)`;
-            } else if (p.inlineData) {
-                const sizeMB = (p.inlineData.data.length / 1024 / 1024).toFixed(2);
-                return `${p.inlineData.mimeType}(${sizeMB}MB)`;
-            }
-            return 'unknown';
-        });
-        console.log(`[Gemini] Content breakdown: ${contentSummary.join(', ')}`);
-        console.log(`[Gemini] Total parts: ${contentParts.length} (1 system prompt + ${contentParts.length - 1} files/prompts)`);
-        
-        const startTime = Date.now();
-        
         const result = await withTimeout(
             generateWithFallback(contentParts),
-            300000, // 5 minute timeout for large files
+            300000,
             'Gemini API generation'
         );
         
-        console.log(`[Gemini] Result received, parsing response...`);
         const response = await result.response;
         let generatedText = response.text();
-        
-        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-        const wordCount = generatedText.split(/\s+/).length;
-        console.log(`[Gemini] Response: ${generatedText.length} chars, ~${wordCount} words in ${duration}s`);
-        console.log(`========== GEMINI RESPONSE COMPLETE ==========\n`);
-        
-        // Print full output for debugging
-        console.log(`\n========== FULL GEMINI OUTPUT ==========`);
-        console.log(generatedText);
-        console.log(`========== END FULL OUTPUT ==========\n`);
 
-        // Check if AI refused to process content
         if (generatedText.trim() === 'REFUSE' || generatedText.trim().startsWith('REFUSE')) {
             return res.status(400).json({
                 status: 'error',
@@ -388,8 +311,6 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         const images = [];
 
         if (placeholders.length > 0) {
-            console.log(`Found ${placeholders.length} image search placeholders`);
-
             for (const placeholder of placeholders) {
                 const searchResults = await searchImages(placeholder.description, 1);
                 if (searchResults.length > 0) {
@@ -436,10 +357,6 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         });
 
     } catch (error) {
-        console.error("[Material Create] Error:", error.message);
-        console.error("[Material Create] Stack:", error.stack);
-
-        // Clean up files if they exist
         if (uploadedFiles && uploadedFiles.length > 0) {
             uploadedFiles.forEach(file => {
                 try {
@@ -447,7 +364,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         fs.unlinkSync(file.path);
                     }
                 } catch (cleanupError) {
-                    console.error("Cleanup Error:", cleanupError);
+                    // Ignore cleanup errors
                 }
             });
         }
@@ -492,8 +409,7 @@ router.get('/:subjectId', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', materials });
     } catch (error) {
-        console.error("Fetch Materials Error:", error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch materials', details: error.message });
+        res.status(500).json({ status: 'error', message: 'Failed to fetch materials' });
     }
 });
 
@@ -515,8 +431,7 @@ router.get('/material/:id', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', material });
     } catch (error) {
-        console.error("Fetch Material Error:", error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch material', details: error.message });
+        res.status(500).json({ status: 'error', message: 'Failed to fetch material' });
     }
 });
 
@@ -544,8 +459,7 @@ router.delete('/:materialId', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'Material deleted successfully' });
     } catch (error) {
-        console.error("Delete Material Error:", error);
-        res.status(500).json({ status: 'error', message: 'Failed to delete material', details: error.message });
+        res.status(500).json({ status: 'error', message: 'Failed to delete material' });
     }
 });
 

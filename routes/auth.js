@@ -22,17 +22,14 @@ router.post('/login', async (req, res) => {
                 picture,
                 // We update these in case the user changed their Google photo/name
             },
-            { new: true, upsert: true } // Create if not found
+            { new: true, upsert: true }
         );
-
-        console.log(`User Saved to DB: ${user.email}`);
 
         res.json({
             status: 'success',
             user: user
         });
     } catch (error) {
-        console.error("Auth Error:", error.message);
         res.status(401).json({ status: 'error', message: 'Invalid Token' });
     }
 });

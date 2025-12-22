@@ -20,11 +20,8 @@ router.post('/create', verifyToken, async (req, res) => {
 
         await newSpace.save();
 
-        console.log(`Space Created: ${name} (Code: ${newSpace.joinCode})`);
-
         res.json({ status: 'success', space: newSpace });
     } catch (error) {
-        console.error("Create Space Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not create space' });
     }
 });
@@ -39,7 +36,6 @@ router.get('/my-spaces', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', spaces });
     } catch (error) {
-        console.error("Fetch Spaces Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not fetch spaces' });
     }
 });
@@ -68,7 +64,6 @@ router.put('/:spaceId', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', space, message: 'Space updated successfully' });
     } catch (error) {
-        console.error("Update Space Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not update space' });
     }
 });
@@ -95,7 +90,6 @@ router.post('/join', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', space, message: 'Successfully joined space' });
     } catch (error) {
-        console.error("Join Space Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not join space' });
     }
 });
@@ -136,7 +130,6 @@ router.post('/:spaceId/make-admin', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'User promoted to admin', space });
     } catch (error) {
-        console.error("Make Admin Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not make user admin' });
     }
 });
@@ -164,7 +157,6 @@ router.post('/:spaceId/remove-admin', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'Admin removed', space });
     } catch (error) {
-        console.error("Remove Admin Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not remove admin' });
     }
 });
@@ -189,7 +181,6 @@ router.delete('/:spaceId', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'Space deleted successfully' });
     } catch (error) {
-        console.error("Delete Space Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not delete space' });
     }
 });
@@ -218,7 +209,6 @@ router.post('/:spaceId/leave', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'Left space successfully' });
     } catch (error) {
-        console.error("Leave Space Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not leave space' });
     }
 });
@@ -268,7 +258,6 @@ router.get('/:spaceId/members', verifyToken, async (req, res) => {
             currentUserIsOwner: space.owner._id.toString() === req.user._id.toString()
         });
     } catch (error) {
-        console.error("Get Members Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not fetch members' });
     }
 });
@@ -320,7 +309,6 @@ router.post('/:spaceId/toggle-editor', verifyToken, async (req, res) => {
             isEditor: !isEditor
         });
     } catch (error) {
-        console.error("Toggle Editor Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not update editor permission' });
     }
 });
@@ -355,7 +343,6 @@ router.post('/:spaceId/remove-member', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'Member removed successfully' });
     } catch (error) {
-        console.error("Remove Member Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not remove member' });
     }
 });
@@ -385,7 +372,6 @@ router.get('/:spaceId/can-edit', verifyToken, async (req, res) => {
             isEditor
         });
     } catch (error) {
-        console.error("Check Edit Permission Error:", error);
         res.status(500).json({ status: 'error', message: 'Could not check permissions' });
     }
 });

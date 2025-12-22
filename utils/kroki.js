@@ -173,9 +173,6 @@ async function generateDiagram(type, source) {
             cleanedSource = sanitizeMermaidSource(cleanedSource);
         }
         
-        console.log(`Generating ${diagramType} diagram as PNG...`);
-        
-        // Generate PNG using Kroki API
         const response = await axios.post(
             `${KROKI_BASE_URL}/${diagramType}/png`,
             cleanedSource,
@@ -193,7 +190,6 @@ async function generateDiagram(type, source) {
         if (response.status >= 400) {
             const errorText = Buffer.from(response.data).toString('utf-8');
             const errorMessage = errorText.substring(0, 300);
-            console.error(`Kroki error (${response.status}):`, errorMessage);
             return {
                 success: false,
                 error: `Diagram syntax error: ${errorMessage}`
@@ -202,15 +198,11 @@ async function generateDiagram(type, source) {
         
         // Upload PNG to Cloudinary
         const pngBuffer = Buffer.from(response.data);
-        console.log(`Uploading ${diagramType} diagram to Cloudinary (${pngBuffer.length} bytes)...`);
         
-        // Generate a unique ID based on content hash
         const hash = crypto.createHash('md5').update(cleanedSource).digest('hex').substring(0, 12);
         const publicId = `diagram_${diagramType}_${hash}`;
         
         const cloudinaryResult = await uploadToCloudinary(pngBuffer, 'study_space/diagrams', publicId);
-        
-        console.log(`Diagram uploaded successfully: ${cloudinaryResult.url}`);
         
         return {
             success: true,
@@ -226,7 +218,6 @@ async function generateDiagram(type, source) {
                 ? Buffer.from(error.response.data).toString('utf-8').substring(0, 200)
                 : error.message)
             : error.message;
-        console.error(`Diagram generation error (${type}):`, errorMessage);
         return {
             success: false,
             error: errorMessage
@@ -283,14 +274,9 @@ async function processDiagramBlocks(content) {
         return { content, diagrams: [] };
     }
     
-    console.log(`Found ${diagramBlocks.length} diagram(s) to process...`);
-    
-    // Sort by position in reverse to maintain correct positions during replacement
     diagramBlocks.sort((a, b) => b.position - a.position);
     
     for (const block of diagramBlocks) {
-        console.log(`Processing ${block.type} diagram (${block.source.length} chars)...`);
-        
         const result = await generateDiagram(block.type, block.source);
         
         if (result.success) {
@@ -301,17 +287,12 @@ async function processDiagramBlocks(content) {
                 source: block.source
             });
             
-            // Replace the code block with a markdown image
             const altText = `${block.type} diagram`;
             content = content.replace(
                 block.fullMatch,
                 `![${altText}](${result.url})`
             );
-            
-            console.log(`✓ ${block.type} diagram rendered and uploaded successfully`);
         } else {
-            console.error(`✗ Failed to render ${block.type} diagram:`, result.error);
-            // Keep the code block but add an error note
             content = content.replace(
                 block.fullMatch,
                 `${block.fullMatch}\n\n*⚠️ Diagram rendering failed: ${result.error}*`

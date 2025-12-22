@@ -71,7 +71,6 @@ router.put('/:subjectId', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', subject, message: 'Subject renamed successfully' });
     } catch (error) {
-        console.error("Update Subject Error:", error);
         res.status(500).json({ status: 'error', message: 'Failed to update subject' });
     }
 });
@@ -103,7 +102,6 @@ router.delete('/:subjectId', verifyToken, async (req, res) => {
 
         res.json({ status: 'success', message: 'Subject and its materials deleted successfully' });
     } catch (error) {
-        console.error("Delete Subject Error:", error);
         res.status(500).json({ status: 'error', message: 'Failed to delete subject' });
     }
 });

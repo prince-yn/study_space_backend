@@ -34,16 +34,7 @@ async function pdfToImages(pdfPath, outputDir) {
                 mimeType: 'image/png',
                 pageNumber: pngFiles.indexOf(pngFile) + 1
             });
-        }
-
-        console.log(`Converted PDF to ${images.length} images`);
-    } catch (error) {
-        console.error('PDF to image conversion failed:', error.message);
-        console.log('Falling back to text extraction...');
-        // Return empty array - caller will fall back to text extraction
-    }
-
-    return images;
+        }\n\n    } catch (error) {\n        // Return empty array - caller will fall back to text extraction\n    }\n\n    return images;
 }
 
 /**
@@ -56,7 +47,7 @@ function cleanupImages(images) {
                 fs.unlinkSync(img.path);
             }
         } catch (e) {
-            console.error('Cleanup error:', e.message);
+            // Ignore cleanup errors
         }
     }
 }
