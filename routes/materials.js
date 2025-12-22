@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
-const pdfParse = require('pdf-parse');
 const verifyToken = require('../auth_middleware');
 const upload = require('../config/multer');
 const { generateWithFallback } = require('../config/gemini');
@@ -10,7 +9,6 @@ const Material = require('../models/Material');
 const Subject = require('../models/Subject');
 const Space = require('../models/Space');
 const { searchImages, extractImagePlaceholders, replaceImagePlaceholders } = require('../utils/imageSearch');
-const { pdfToImages, cleanupImages } = require('../utils/pdfToImages');
 const { processDiagramBlocks } = require('../utils/kroki');
 
 // Helper function to add timeout to promises
