@@ -128,13 +128,18 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         continue;
                     }
 
-                    console.log(`Downloading PDF from: ${fileUrl}`);
+                    // Fix URL: ensure https and correct resource type for PDFs
+                    let correctedUrl = fileUrl
+                        .replace(/^http:\/\//, 'https://')  // Fix protocol
+                        .replace('/image/upload/', '/raw/upload/');  // Fix resource type for PDFs
+                    
+                    console.log(`Downloading PDF from: ${correctedUrl}`);
 
                     // Download PDF from Cloudinary URL
                     const axios = require('axios');
                     try {
                         // First try direct URL
-                        const response = await axios.get(fileUrl, {
+                        const response = await axios.get(correctedUrl, {
                             responseType: 'arraybuffer',
                             maxContentLength: 50 * 1024 * 1024, // 50MB
                             maxBodyLength: 50 * 1024 * 1024

@@ -6,11 +6,14 @@ const cloudinary = require('./cloudinary');
 const storage = process.env.USE_CLOUDINARY === 'true' 
   ? new CloudinaryStorage({
       cloudinary: cloudinary,
-      params: {
-        folder: 'study_space',
-        allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'webp'],
-        resource_type: 'auto',
-        access_mode: 'public' // Ensure files are publicly accessible
+      params: async (req, file) => {
+        const isPdf = file.mimetype === 'application/pdf';
+        return {
+          folder: 'study_space',
+          allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'webp'],
+          resource_type: isPdf ? 'raw' : 'auto',
+          access_mode: 'public'
+        };
       }
     })
   : multer.memoryStorage(); // Use memory storage if Cloudinary not configured
