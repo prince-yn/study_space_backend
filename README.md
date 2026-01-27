@@ -144,8 +144,6 @@ study_space_backend/
 - `POST /chat/digitize-notes` - AI-powered note digitization
 - `POST /chat/generate-content` - Content generation using Gemini
 
-## Setup
-
 ## Troubleshooting
 
 | Issue | Solution |
