@@ -1,11 +1,6 @@
 const axios = require('axios');
 
-/**
- * Search for images using Google Custom Search API
- * @param {string} query - Search query
- * @param {number} numResults - Number of results to return (default: 1)
- * @returns {Promise<Array>} Array of image URLs
- */
+
 async function searchImages(query, numResults = 1) {
     try {
         const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
@@ -32,12 +27,7 @@ async function searchImages(query, numResults = 1) {
     }
 }
 
-/**
- * Extract image placeholders from markdown content
- * Format: {{IMAGE: description}}
- * @param {string} content - Markdown content
- * @returns {Array} Array of placeholders with positions
- */
+
 function extractImagePlaceholders(content) {
     const regex = /\{\{IMAGE:\s*([^}]+)\}\}/g;
     const placeholders = [];
@@ -54,16 +44,11 @@ function extractImagePlaceholders(content) {
     return placeholders;
 }
 
-/**
- * Replace image placeholders with actual image markdown
- * @param {string} content - Original markdown content
- * @param {Array} images - Array of images with placeholder and URL
- * @returns {string} Updated content with images
- */
+
 function replaceImagePlaceholders(content, images) {
     let updatedContent = content;
 
-    // Sort by position in reverse to maintain correct positions
+    
     images.sort((a, b) => b.position - a.position);
 
     images.forEach(image => {

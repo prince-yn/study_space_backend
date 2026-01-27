@@ -6,9 +6,7 @@ const { Readable } = require('stream');
 
 const KROKI_BASE_URL = 'https://kroki.io';
 
-/**
- * Supported diagram types in Kroki
- */
+
 const DIAGRAM_TYPES = {
   mermaid: 'mermaid',
   plantuml: 'plantuml',
@@ -30,44 +28,31 @@ const DIAGRAM_TYPES = {
 };
 
 
-/**
- * Encode diagram source for Kroki URL
- * Uses deflate compression + base64 URL-safe encoding
- */
+
 function encodeDiagramSource(source) {
     const compressed = zlib.deflateSync(source);
-    // Convert to base64 URL-safe format
+    
     return compressed.toString('base64')
         .replace(/\+/g, '-')
-        .replace(/\//g, '_')
+        .replace(/\
         .replace(/=+$/, '');
 }
 
-/**
- * Generate a Kroki diagram URL
- * @param {string} type - Diagram type (mermaid, plantuml, graphviz, etc.)
- * @param {string} source - Diagram source code
- * @param {string} format - Output format (svg, png, pdf)
- * @returns {string} Kroki URL for the diagram
- */
+
 function getDiagramUrl(type, source, format = 'png') {
     const diagramType = DIAGRAM_TYPES[type.toLowerCase()] || type.toLowerCase();
     const encoded = encodeDiagramSource(source);
     return `${KROKI_BASE_URL}/${diagramType}/${format}/${encoded}`;
 }
 
-/**
- * Sanitize mermaid diagram source to fix common syntax issues
- * @param {string} source - Raw mermaid source
- * @returns {string} Sanitized source
- */
+
 function sanitizeMermaidSource(source) {
     let cleaned = source.trim();
     
-    // Replace smart quotes and apostrophes with safe alternatives
+    
     cleaned = cleaned
-        .replace(/[\u2018\u2019]/g, '') // Remove smart single quotes
-        .replace(/[\u201C\u201D]/g, '"') // Replace smart double quotes
+        .replace(/[\u2018\u2019]/g, '') 
+        .replace(/[\u201C\u201D]/g, '"') 
         .replace(/'/g, '')  // Remove apostrophes (they break mermaid node labels)
         .replace(/`/g, ''); // Remove backticks
     

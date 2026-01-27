@@ -1,7 +1,4 @@
-/**
- * Generate a random 6-character join code for spaces
- * @returns {string} Random join code
- */
+
 function generateJoinCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';

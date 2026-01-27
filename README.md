@@ -1,32 +1,38 @@
-# StudySpace Backend
+# StudySpace Backend (Node/Express)
 
-RESTful API for StudySpace - AI-powered study materials management.
+## Overview
+Supports StudySpace by providing auth sync, space/subject/material APIs, media handling, and AI-powered note digitisation.
 
-## Stack
-
-Node.js • Express • MongoDB • Firebase • Gemini AI • Cloudinary
+## Tech Stack
+- Node.js, Express
+- MongoDB via Mongoose
+- Firebase Admin for auth/user sync
+- Google Gemini (`@google/generative-ai`) for AI workflows
+- Cloudinary + multer + sharp for uploads and transformations
+- PDF/image handling with pdf-to-img
+- Axios for outbound requests
+- dotenv for configuration
 
 ## Setup
+1) Install Node.js (18+ recommended).
+2) Run `npm install`.
+3) Copy `.env.example` to `.env` and set:
+   - `PORT`, `MONGODB_URI`
+   - Firebase service account path/JSON
+   - Cloudinary credentials
+   - Gemini API key
+4) Ensure `service-account.json` matches your Firebase project.
 
-```bash
-npm install
-cp .env.example .env  # Fill credentials
-npm run dev
-```
+## Run
+- Development: `npm run dev`
+- Production: `npm start`
 
-## Deploy to Railway
+## API
+- Auth sync endpoints
+- Spaces and subjects CRUD
+- Materials upload/retrieval
+- Chat/AI routes for note digitisation
 
-1. Push to GitHub
-2. New Railway project from repo
-3. Add env vars from `.env.example`
-4. Generate domain
-
-## API Endpoints
-
-**Auth**: `/api/auth/*`  
-**Spaces**: `/api/spaces/*`  
-**Subjects**: `/api/subjects/*`  
-**Materials**: `/api/materials/*`  
-**Chat**: `/api/chat`
-
-See [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) for details.
+## Notes
+- Keep MongoDB, Firebase, and Cloudinary credentials secure.
+- Validate file size/type limits in multer config as needed.

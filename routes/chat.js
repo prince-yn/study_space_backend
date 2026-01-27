@@ -4,7 +4,7 @@ const verifyToken = require('../auth_middleware');
 const { generateWithFallback } = require('../config/gemini');
 const Material = require('../models/Material');
 
-// Context-aware chat endpoint
+
 router.post('/ask', verifyToken, async (req, res) => {
     const { question, contextType, contextId } = req.body;
 
@@ -16,9 +16,9 @@ router.post('/ask', verifyToken, async (req, res) => {
         let contextPrompt = '';
         let conversationParts = [];
 
-        // Build context based on type
+        
         if (contextType === 'material' && contextId) {
-            // Get material content as context
+            
             const material = await Material.findById(contextId);
             if (material) {
                 contextPrompt = `You are a helpful study assistant. The student is currently reading the following study material:

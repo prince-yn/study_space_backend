@@ -12,17 +12,17 @@ const Space = require('../models/Space');
 const { searchImages, extractImagePlaceholders, replaceImagePlaceholders } = require('../utils/imageSearch');
 const { processDiagramBlocks } = require('../utils/kroki');
 
-// Helper function to add timeout to promises
+
 const withTimeout = (promise, timeoutMs, operationName) => {
     return Promise.race([
         promise,
-        new Promise((_, reject) => 
-            setTimeout(() => reject(new Error(`${operationName} timed out after ${timeoutMs/1000}s`)), timeoutMs)
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${operationName} timed out after ${timeoutMs / 1000}s`)), timeoutMs)
         )
     ]);
 };
 
-// Helper function to check if user can edit
+
 const canUserEdit = async (spaceId, userId) => {
     const space = await Space.findById(spaceId);
     if (!space) return false;
@@ -34,18 +34,18 @@ const canUserEdit = async (spaceId, userId) => {
     return isOwner || isAdmin || isEditor;
 };
 
-// Scan Notes - Upload files and convert to Markdown with LaTeX
+
 router.post('/create', verifyToken, (req, res, next) => {
     if (req.headers['content-type']?.includes('application/json')) {
         return next();
     }
-    
+
     const uploadHandler = upload.array('files', 20);
     uploadHandler(req, res, (err) => {
         if (err) {
-            return res.status(400).json({ 
-                status: 'error', 
-                message: `File upload failed: ${err.message}` 
+            return res.status(400).json({
+                status: 'error',
+                message: `File upload failed: ${err.message}`
             });
         }
         next();
@@ -59,18 +59,18 @@ router.post('/create', verifyToken, (req, res, next) => {
             return res.status(400).json({ status: 'error', message: 'Subject ID is required' });
         }
 
-        // Validate ObjectId format
+        
         if (!subjectId.match(/^[0-9a-fA-F]{24}$/)) {
             return res.status(400).json({ status: 'error', message: 'Invalid subject ID format' });
         }
 
-        // Verify subject exists and get space ID
+        
         const subject = await Subject.findById(subjectId);
         if (!subject) {
             return res.status(404).json({ status: 'error', message: 'Subject not found' });
         }
 
-        // Check if user has edit permission
+        
         if (!(await canUserEdit(subject.spaceId, req.user._id))) {
             return res.status(403).json({ status: 'error', message: 'You do not have permission to create materials in this space' });
         }
@@ -80,40 +80,45 @@ router.post('/create', verifyToken, (req, res, next) => {
 
 
         const systemPrompt = `# Role
-You are an expert Academic Assistant that transforms rough study materials (blackboard photos, scribbled notes, or transcripts) into high-quality, structured Markdown notes.
+You are an expert Digital Note Architect. Your goal is to digitize and structurise rough study materials into clean, scannable Markdown notes.
 
-# Task
-Analyze the input and generate a comprehensive study guide. Expand fragmented thoughts into clear explanations and solve any homework questions or math problems found in the notes.
+# Core Philosophy
+**Structure > Expansion.** Do not write a textbook. Your job is to organize the user's existing thoughts, not to generate new academic fluff. Only fill gaps if the notes are unintelligible.
 
 # Guidelines
-1. **Formatting:** Use the full range of Markdown. Use # for titles, ## and ### for hierarchy, and **bold** for key terms. Use tables for comparisons and --- (horizontal rules) to separate different topics or sections.
-2. **Mathematical Notation:** Use LaTeX for all formulas and variables.
-   * Inline: $E = mc^2$
-   * Block: $$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$
-3. **Diagrams (Kroki.io):** Use code blocks to recreate sketches or logic. Use the best engine for the data (mermaid, plantuml, graphviz, dot, blockdiag, seqdiag, actdiag, nwdiag, packetdiag, rackdiag, c4plantuml, ditaa, erd, structurizr, vega, vegalite, wireviz).
-   * **Example: (Use the most relevant engine provided above, not only mermaid)**
-     \`\`\`mermaid
-     graph TD;
-     A[Light] --> B{Photosynthesis};
-     B --> C[Oxygen];
-     B --> D[Glucose];
-     \`\`\`
-4. **Visual Placeholders:** Use {{IMAGE: description}} for common graphs, anatomy, or complex photos, maps that cannot be coded.
-   * **Example:** {{IMAGE: supply and demand curve graph}} or {{IMAGE: structure of a plant cell}} or {{IMAGE: visible light spectrum}}.
-5. **Tone & Style:** Maintain a "Helpful Peer" tone—approachable, clear, and easy to read. Avoid dense jargon unless it is a key term being defined. Preferably use Indian English conventions.
-6. **Fallback Logic:** If the input is missing, blurry, or extremely sparse, generate a comprehensive college-level overview of the identified topic so the user still gets a useful study guide.
-7. **Safety:** If the content is inappropriate, harmful, or nonsensical, respond ONLY with "REFUSE".
+
+## 1. Tone & Style
+* **Concise & Direct:** Use bullet points, short sentences, and tables.
+* **Voice:** Maintain a "Helpful Peer" tone. Use Indian English conventions (e.g., "doubts" for questions, "revision" for review).
+* **No Jargon:** If a simple word works, use it. Do not define terms unless the user defined them in the notes.
+
+## 2. Diagramming Logic (CRITICAL)
+**Condition:** Only generate a diagram if the input contains a sketch, a complex process, or a comparison. **Do not force a diagram if text is sufficient.**
+
+**Tool Selection Strategy:**
+* IF Flowchart, Decision Tree, or Timeline → **Use Mermaid**
+* IF Database Schema or Entity Relationships → **Use ERD (Erd)**
+* IF Network Topology or Packet Structure → **Use PacketDiag or NwDiag**
+* IF UML Classes or System Architecture → **Use PlantUML or C4PlantUML**
+* IF Abstract or Non-Codeable Visual → **Use {{IMAGE: description}}**
+
+## 3. Formatting Rules
+* **Math:** Use LaTeX for all formulas ($E=mc^2$).
+* **Structure:** Use H1 (#) for the main topic, H2 (##) for sub-topics.
+* **Tables:** Aggressively use tables to compare concepts (e.g., "Linear vs Binary Search").
 
 # Output Format
-# [Title]
-> **Summary:** A brief overview of the notes.
+# [Topic Name]
+> **TL;DR:** [One sentence summary of the notes]
 
 ---
-[Structured Markdown Content with Diagrams and Placeholders]
+[Main Content: Organized bullet points, bold key terms, and tables]
+
+[Diagram Block - ONLY IF NECESSARY based on Logic above]
 
 ---
-## Solutions
-[Step-by-step solutions for any problems found in the notes]
+## Practice & Solutions
+[Only include if math/code problems exist in the source]
 `;
 
         contentParts.push(systemPrompt);
@@ -122,18 +127,18 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         if (base64Files && Array.isArray(base64Files)) {
             for (const encodedFile of base64Files) {
                 const { filename, data, mimetype } = encodedFile;
-                
+
                 if (!filename || !data || !mimetype) {
                     continue;
                 }
-                
+
                 sourceFiles.push({
                     originalName: filename,
                     fileType: mimetype.includes('pdf') ? 'pdf' : 'image',
                     size: data.length,
                     url: 'base64'
                 });
-                
+
                 contentParts.push({
                     inlineData: {
                         data: data,
@@ -152,7 +157,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             if (!isPdf && process.env.USE_CLOUDINARY === 'true') {
                 try {
                     const cloudinary = require('../config/cloudinary');
-                    
+
                     const uploadResult = await new Promise((resolve, reject) => {
                         const uploadStream = cloudinary.uploader.upload_stream(
                             {
@@ -166,7 +171,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
                         );
                         uploadStream.end(file.buffer);
                     });
-                    
+
                     fileUrl = uploadResult.secure_url;
                 } catch (uploadError) {
                     fileUrl = 'memory';
@@ -185,25 +190,25 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             if (isPdf) {
                 const pdfBuffer = file.buffer;
                 const pdfSizeMB = pdfBuffer.length / 1024 / 1024;
-                
+
                 if (pdfSizeMB > 20) {
                     contentParts.push({
                         text: `PDF "${file.originalname}" is too large (${pdfSizeMB.toFixed(1)} MB). Please use a smaller file.`
                     });
                     continue;
                 }
-                
+
                 try {
                     const document = await pdf(pdfBuffer, { scale: 2.0 });
                     let pageNum = 0;
-                    
+
                     for await (const image of document) {
                         pageNum++;
-                        
+
                         if (pageNum > 20) {
                             break;
                         }
-                        
+
                         const base64Image = image.toString('base64');
                         contentParts.push({
                             inlineData: {
@@ -263,7 +268,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
             300000,
             'Gemini API generation'
         );
-        
+
         const response = await result.response;
         let generatedText = response.text();
 
@@ -281,7 +286,7 @@ Analyze the input and generate a comprehensive study guide. Expand fragmented th
         // Match the expected format: # Title\n> **Summary:** ...\n---\nContent
         // First try: title followed by summary blockquote then separator
         let titleMatch = generatedText.match(/^#\s+(.+?)[\r\n]+>[\s\S]*?[\r\n]+---[\r\n]+([\s\S]+)/);
-        
+
         if (titleMatch) {
             title = titleMatch[1].trim();
             content = titleMatch[2].trim();

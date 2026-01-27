@@ -5,7 +5,7 @@ const Subject = require('../models/Subject');
 const Space = require('../models/Space');
 const Material = require('../models/Material');
 
-// Helper function to check if user can edit
+
 const canUserEdit = (space, userId) => {
     const userIdStr = userId.toString();
     const isOwner = space.owner.toString() === userIdStr;
@@ -14,11 +14,11 @@ const canUserEdit = (space, userId) => {
     return isOwner || isAdmin || isEditor;
 };
 
-// Create a Subject
+
 router.post('/create', verifyToken, async (req, res) => {
     const { spaceId, name } = req.body;
     try {
-        // Check if user has edit permission
+        
         const space = await Space.findById(spaceId);
         if (!space) {
             return res.status(404).json({ status: 'error', message: 'Space not found' });
@@ -36,7 +36,7 @@ router.post('/create', verifyToken, async (req, res) => {
     }
 });
 
-// Get Subjects for a specific Space
+
 router.get('/:spaceId', verifyToken, async (req, res) => {
     try {
         const subjects = await Subject.find({ spaceId: req.params.spaceId });
@@ -46,7 +46,7 @@ router.get('/:spaceId', verifyToken, async (req, res) => {
     }
 });
 
-// Update Subject name (owner/admin/editor only)
+
 router.put('/:subjectId', verifyToken, async (req, res) => {
     const { subjectId } = req.params;
     const { name } = req.body;
@@ -75,7 +75,7 @@ router.put('/:subjectId', verifyToken, async (req, res) => {
     }
 });
 
-// Delete a Subject (owner/admin/editor only)
+
 router.delete('/:subjectId', verifyToken, async (req, res) => {
     const { subjectId } = req.params;
 
@@ -94,10 +94,10 @@ router.delete('/:subjectId', verifyToken, async (req, res) => {
             return res.status(403).json({ status: 'error', message: 'You do not have permission to delete this subject' });
         }
 
-        // Delete all materials in this subject
+        
         await Material.deleteMany({ subjectId: subjectId });
         
-        // Delete the subject
+        
         await Subject.findByIdAndDelete(subjectId);
 
         res.json({ status: 'success', message: 'Subject and its materials deleted successfully' });
